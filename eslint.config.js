@@ -19,6 +19,14 @@ export default [
     },
   },
   {
+    files: ['shared/tests/**/*.js'],
+    languageOptions: {
+      globals: {
+        performance: 'readonly',
+      },
+    },
+  },
+  {
     // Enforce Core Architecture Law #1: Math.random() is strictly banned in procedural generators.
     files: ['shared/generators/**/*.js'],
     rules: {
