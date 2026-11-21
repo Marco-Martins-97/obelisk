@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ROCK_TYPES } from '../config/worldGeology.js';
 import { generateContinent } from '../generators/continentGenerator.js';
-import { generateTerritory, getWorldTileContext } from '../generators/territoryGenerator.js';
+import {
+  TERRITORY_FOREST_THRESHOLD,
+  generateTerritory,
+  getWorldTileContext,
+} from '../generators/territoryGenerator.js';
 
 describe('Stage 1.3: Territory Generator', () => {
   it('generates identical 25x25 territories for the same tileSeed and context', () => {
@@ -45,7 +49,7 @@ describe('Stage 1.3: Territory Generator', () => {
     expect(northAvg).toBeGreaterThan(southAvg);
   });
 
-  it('guarantees at least 1 water tile while keeping the central 7x7 settlement zone dry', () => {
+  it('guarantees at least 1 water tile and 1 forest tile while keeping the central 7x7 settlement zone clear', () => {
     const aridContext = {
       center: {
         elevation: 0.7,
@@ -65,23 +69,27 @@ describe('Stage 1.3: Territory Generator', () => {
     const territory = generateTerritory('arid-oasis-test', aridContext);
     expect(territory.waterCount).toBeGreaterThanOrEqual(1);
 
+    const forestTiles = territory.tiles.filter(
+      (t) => !t.isWater && !t.inSettlementZone && t.forestDensity >= TERRITORY_FOREST_THRESHOLD,
+    );
+    expect(forestTiles.length).toBeGreaterThanOrEqual(1);
+
     const settlementTiles = territory.tiles.filter((t) => t.inSettlementZone);
     expect(settlementTiles).toHaveLength(49); // 7x7
     for (const tile of settlementTiles) {
       expect(tile.isWater).toBe(false);
+      expect(tile.forestDensity).toBe(0);
     }
   });
 
-  it('spawns only ore veins matching the parent tile rockType', () => {
-    const shaleInfo = ROCK_TYPES.find((r) => r.id === 'shale');
-    const allowedOres = new Set(shaleInfo.ores);
-
+  it('generates one ore layer per rockType ore with smaller footprints for rarer ores', () => {
+    const marbleInfo = ROCK_TYPES.find((r) => r.id === 'marble'); // flux (common) & gems (very_rare)
     const context = {
       center: {
         elevation: 0.52,
         temperature: 0.45,
         moisture: 0.55,
-        rockType: 'shale',
+        rockType: 'marble',
         biome: 'temperate_forest',
         buildable: true,
         isObelisk: false,
@@ -92,14 +100,53 @@ describe('Stage 1.3: Territory Generator', () => {
       west: { elevation: 0.52, temperature: 0.45, moisture: 0.55 },
     };
 
-    const territory = generateTerritory('shale-ores', context);
-    const oreNodes = territory.tiles
-      .filter((t) => t.resourceNode?.type === 'ore_vein')
-      .map((t) => t.resourceNode.resourceId);
+    const territory = generateTerritory('marble-rarity-test', context);
+    expect(territory.availableOres).toEqual(marbleInfo.ores);
 
-    for (const ore of oreNodes) {
-      expect(allowedOres.has(ore)).toBe(true);
+    let fluxRichTiles = 0;
+    let gemsRichTiles = 0;
+
+    for (const tile of territory.tiles) {
+      expect(tile).not.toHaveProperty('resourceNode');
+      for (const oreId of marbleInfo.ores) {
+        expect(tile.ores[oreId]).toBeGreaterThanOrEqual(0);
+        expect(tile.ores[oreId]).toBeLessThanOrEqual(1);
+      }
+      if (tile.ores.flux >= 0.45) fluxRichTiles += 1;
+      if (tile.ores.gems >= 0.45) gemsRichTiles += 1;
     }
+
+    // Very rare gems should cover fewer tiles than common flux.
+    expect(gemsRichTiles).toBeGreaterThan(0);
+    expect(gemsRichTiles).toBeLessThan(fluxRichTiles);
+  });
+
+  it('derives territory moisture from distance to water tiles', () => {
+    const context = {
+      center: {
+        elevation: 0.65,
+        temperature: 0.7,
+        moisture: 0.05,
+        rockType: 'limestone',
+        biome: 'desert',
+        buildable: true,
+        isObelisk: false,
+      },
+      north: { elevation: 0.65, temperature: 0.7, moisture: 0.05 },
+      south: { elevation: 0.65, temperature: 0.7, moisture: 0.05 },
+      east: { elevation: 0.65, temperature: 0.7, moisture: 0.05 },
+      west: { elevation: 0.65, temperature: 0.7, moisture: 0.05 },
+    };
+
+    const territory = generateTerritory('water-moisture-test', context);
+    const waterTiles = territory.tiles.filter((t) => t.isWater);
+    const dryTiles = territory.tiles.filter((t) => !t.isWater);
+
+    const avgWaterMoist = waterTiles.reduce((s, t) => s + t.moisture, 0) / waterTiles.length;
+    const avgDryMoist = dryTiles.reduce((s, t) => s + t.moisture, 0) / dryTiles.length;
+
+    expect(avgWaterMoist).toBe(1);
+    expect(avgDryMoist).toBeLessThan(avgWaterMoist);
   });
 
   it('handles continent edge context safely and generates 25x25 in <5ms', () => {

@@ -10,6 +10,22 @@ export const ELEVATION_BANDS = {
 };
 
 /**
+ * Ore definitions with rarity tiers controlling vein hotspot size.
+ * More rare = smaller radius; less rare = larger radius.
+ */
+export const ORES = {
+  flux: { id: 'flux', name: 'Flux', rarity: 'common', veinRadiusScale: 0.22, color: '#e2e8f0' },
+  coal: { id: 'coal', name: 'Coal', rarity: 'common', veinRadiusScale: 0.22, color: '#334155' },
+  copper: { id: 'copper', name: 'Copper', rarity: 'common', veinRadiusScale: 0.2, color: '#ea580c' },
+  iron: { id: 'iron', name: 'Iron', rarity: 'common', veinRadiusScale: 0.19, color: '#b91c1c' },
+  tin: { id: 'tin', name: 'Tin', rarity: 'uncommon', veinRadiusScale: 0.13, color: '#94a3b8' },
+  nickel: { id: 'nickel', name: 'Nickel', rarity: 'uncommon', veinRadiusScale: 0.13, color: '#14b8a6' },
+  silver: { id: 'silver', name: 'Silver', rarity: 'rare', veinRadiusScale: 0.085, color: '#cbd5e1' },
+  gold: { id: 'gold', name: 'Gold', rarity: 'rare', veinRadiusScale: 0.08, color: '#facc15' },
+  gems: { id: 'gems', name: 'Gems', rarity: 'very_rare', veinRadiusScale: 0.055, color: '#a855f7' },
+};
+
+/**
  * Specific TFC-inspired single-layer rock types and the ores they can host.
  * Ordered so low-frequency noise maps cleanly into regional provinces.
  */

@@ -1,47 +1,121 @@
+import { useMemo, useState } from 'react';
 import {
   DEFAULT_CONTINENT_SIZE,
   DEFAULT_TERRITORY_SIZE,
-  TIME_SCALE,
+  ROCK_TYPES,
+  generateContinent,
+  generateTerritory,
+  getWorldTileContext,
 } from '@obelisk/shared';
+import ContinentCanvas from './components/ContinentCanvas.jsx';
+import MapControls from './components/MapControls.jsx';
+import TerritoryCanvas from './components/TerritoryCanvas.jsx';
+import TileInspector from './components/TileInspector.jsx';
 
 /**
- * Minimal Stage 0 shell verifying that @obelisk/client bundles
- * @obelisk/shared constants and renders with Tailwind CSS.
+ * Stage 2 Map Viewport & Dev Visualizer.
+ * Territory (48px tiles) is the primary main map; Continent (32px tiles) + Inspector sit in the sidebar.
  *
  * @returns {import('react').JSX.Element}
  */
 export default function App() {
+  const [seed, setSeed] = useState('obelisk-alpha');
+  const [continentSize, setContinentSize] = useState(DEFAULT_CONTINENT_SIZE);
+  const [territorySize, setTerritorySize] = useState(DEFAULT_TERRITORY_SIZE);
+  const [viewMode, setViewMode] = useState('gameplay');
+  const [devLayer, setDevLayer] = useState('biome');
+  const [highlightUnbuildable, setHighlightUnbuildable] = useState(false);
+  const [showObelisk, setShowObelisk] = useState(true);
+  const [selectedCoords, setSelectedCoords] = useState(null);
+  const [hoveredSubTile, setHoveredSubTile] = useState(null);
+
+  const continent = useMemo(
+    () => generateContinent(seed, { size: continentSize }),
+    [seed, continentSize],
+  );
+
+  const activeCoords =
+    selectedCoords &&
+    selectedCoords.x < continent.size &&
+    selectedCoords.y < continent.size
+      ? selectedCoords
+      : continent.obeliskCoords;
+
+  const selectedTile = continent.tiles[activeCoords.y * continent.size + activeCoords.x];
+  const rockInfo = ROCK_TYPES.find((r) => r.id === selectedTile.rockType) ?? ROCK_TYPES[0];
+  const availableOres = rockInfo.ores;
+
+  // Reset ore-specific Dev layer if the newly selected tile's rockType doesn't host it.
+  const activeDevLayer =
+    devLayer.startsWith('ore:') && !availableOres.includes(devLayer.slice(4))
+      ? `ore:${availableOres[0]}`
+      : devLayer;
+
+  const territory = useMemo(() => {
+    const context = getWorldTileContext(continent, activeCoords.x, activeCoords.y);
+    return generateTerritory(selectedTile.tileSeed, context, { size: territorySize });
+  }, [continent, activeCoords.x, activeCoords.y, selectedTile.tileSeed, territorySize]);
+
+  const handleRandomizeSeed = () => {
+    const randomSuffix = Math.floor(Date.now() % 1000000).toString(36);
+    setSeed(`obelisk-${randomSuffix}`);
+    setSelectedCoords(null);
+  };
+
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
-      <section className="max-w-md w-full rounded-xl border border-slate-800 bg-slate-900/80 p-6 shadow-lg">
-        <h1 className="text-2xl font-bold tracking-tight text-amber-400">
-          Obelisk — Stage 0 Ready
-        </h1>
-        <p className="mt-2 text-sm text-slate-300">
-          Monorepo workspace wiring verified between <code className="text-amber-300">@obelisk/client</code> and{' '}
-          <code className="text-amber-300">@obelisk/shared</code>.
-        </p>
-        <dl className="mt-4 grid grid-cols-3 gap-3 text-center text-xs">
-          <div className="rounded-lg bg-slate-950/70 p-3 border border-slate-800">
-            <dt className="text-slate-400">Continent</dt>
-            <dd className="mt-1 font-mono text-sm font-semibold text-slate-100">
-              {DEFAULT_CONTINENT_SIZE}×{DEFAULT_CONTINENT_SIZE}
-            </dd>
-          </div>
-          <div className="rounded-lg bg-slate-950/70 p-3 border border-slate-800">
-            <dt className="text-slate-400">Territory</dt>
-            <dd className="mt-1 font-mono text-sm font-semibold text-slate-100">
-              {DEFAULT_TERRITORY_SIZE}×{DEFAULT_TERRITORY_SIZE}
-            </dd>
-          </div>
-          <div className="rounded-lg bg-slate-950/70 p-3 border border-slate-800">
-            <dt className="text-slate-400">Time Scale</dt>
-            <dd className="mt-1 font-mono text-sm font-semibold text-slate-100">
-              {TIME_SCALE}×
-            </dd>
-          </div>
-        </dl>
-      </section>
-    </main>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <MapControls
+        seed={seed}
+        onApplySeed={(next) => {
+          setSeed(next);
+          setSelectedCoords(null);
+        }}
+        onRandomizeSeed={handleRandomizeSeed}
+        continentSize={continentSize}
+        onContinentSizeChange={(size) => {
+          setContinentSize(size);
+          setSelectedCoords(null);
+        }}
+        territorySize={territorySize}
+        onTerritorySizeChange={setTerritorySize}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        devLayer={activeDevLayer}
+        onDevLayerChange={setDevLayer}
+        availableOres={availableOres}
+        highlightUnbuildable={highlightUnbuildable}
+        onToggleUnbuildable={setHighlightUnbuildable}
+        showObelisk={showObelisk}
+        onToggleObelisk={setShowObelisk}
+      />
+
+      <main className="mx-auto grid max-w-7xl gap-4 p-4 lg:grid-cols-[1fr_360px]">
+        <TerritoryCanvas
+          key={`${territory.size}-${selectedTile.tileSeed}`}
+          territory={territory}
+          viewMode={viewMode}
+          devLayer={activeDevLayer}
+          highlightUnbuildable={highlightUnbuildable}
+          onHoverSubTile={setHoveredSubTile}
+        />
+
+        <TileInspector
+          selectedTile={selectedTile}
+          hoveredSubTile={hoveredSubTile}
+          viewMode={viewMode}
+        >
+          <ContinentCanvas
+            key={continent.size}
+            continent={continent}
+            viewMode={viewMode}
+            devLayer={activeDevLayer}
+            highlightUnbuildable={highlightUnbuildable}
+            showObelisk={showObelisk}
+            selectedCoords={activeCoords}
+            onSelectTile={setSelectedCoords}
+          />
+        </TileInspector>
+      </main>
+    </div>
   );
 }

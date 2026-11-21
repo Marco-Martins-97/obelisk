@@ -49,7 +49,22 @@ export function generateContinent(masterWorldSeed, { size = DEFAULT_CONTINENT_SI
   const elevationNoise = createNoise2D(hashCoords(masterWorldSeed, 0, 0, 1));
   const tempNoise = createNoise2D(hashCoords(masterWorldSeed, 0, 0, 2));
   const moistureNoise = createNoise2D(hashCoords(masterWorldSeed, 0, 0, 3));
-  const rockNoise = createNoise2D(hashCoords(masterWorldSeed, 0, 0, 4));
+  const rockWarpX = createNoise2D(hashCoords(masterWorldSeed, 0, 0, 4));
+  const rockWarpY = createNoise2D(hashCoords(masterWorldSeed, 0, 0, 5));
+
+  // Seeded Voronoi rock provinces (3x per rock type) guarantee every stone type
+  // spawns in organic, non-onion-ringed regions across the continent.
+  const provinceRng = createPrng(hashCoords(masterWorldSeed, 0, 0, 6));
+  const provincesPerRock = 3;
+  const rockProvinces = [];
+  for (let p = 0; p < ROCK_TYPES.length * provincesPerRock; p += 1) {
+    rockProvinces.push({
+      px: provinceRng() * size,
+      py: provinceRng() * size,
+      rockType: ROCK_TYPES[p % ROCK_TYPES.length].id,
+    });
+  }
+  const warpAmplitude = Math.max(2, size * 0.08);
 
   const tiles = new Array(size * size);
   const buildableIndices = [];
@@ -68,13 +83,20 @@ export function generateContinent(masterWorldSeed, { size = DEFAULT_CONTINENT_SI
 
       const moisture = fbm2D(moistureNoise, x, y, { scale: 0.04, octaves: 4 });
 
-      // Low-frequency noise creates large regional rock provinces.
-      const rockSample = fbm2D(rockNoise, x, y, { scale: 0.025, octaves: 2 });
-      const rockIndex = Math.min(
-        ROCK_TYPES.length - 1,
-        Math.floor(rockSample * ROCK_TYPES.length),
-      );
-      const rockType = ROCK_TYPES[rockIndex].id;
+      // Domain-warped Voronoi lookup for organic regional rock provinces.
+      const wx = x + (fbm2D(rockWarpX, x, y, { scale: 0.06, octaves: 2 }) - 0.5) * warpAmplitude;
+      const wy = y + (fbm2D(rockWarpY, x, y, { scale: 0.06, octaves: 2 }) - 0.5) * warpAmplitude;
+      let nearestRock = rockProvinces[0].rockType;
+      let nearestDistSq = Infinity;
+      for (let p = 0; p < rockProvinces.length; p += 1) {
+        const prov = rockProvinces[p];
+        const distSq = (wx - prov.px) ** 2 + (wy - prov.py) ** 2;
+        if (distSq < nearestDistSq) {
+          nearestDistSq = distSq;
+          nearestRock = prov.rockType;
+        }
+      }
+      const rockType = nearestRock;
 
       const biome = classifyBiome(elevation, temperature, moisture);
       const buildable =

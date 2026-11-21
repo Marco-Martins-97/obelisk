@@ -51,13 +51,15 @@ Seasons cycle through **Spring → Summer → Autumn → Winter**, affecting tem
 ## 5. Staged Build Roadmap
 We build strictly **one stage at a time**, verifying each stage with automated tests before moving on:
 
-1. **Stage 1 — World & Territory Generation (`/shared`)**
-   - Deterministic `100×100` Continent generator (elevation, temperature, moisture, tectonic rock layers, rivers, biomes, single Obelisk placement).
-   - Deterministic `25×25` Territory generator derived from `tileSeed`.
-   - Vitest suite verifying seed determinism, bounds, and performance.
-2. **Stage 2 — Map Viewport & Dev Visualizer (`/client`)**
-   - Interactive HTML5 Canvas / Grid viewer for the `100×100` Continent and `25×25` Territory.
-   - Layer toggles (Elevation, Temperature, Moisture, Rock/Ore, Biomes) + seed controls + click-to-zoom inspection.
+0. **Stage 0 — Monorepo & Tooling Bootstrap** *(Complete)*
+   - npm workspaces (`shared`, `client`, `server`), pure ESM, Vitest, ESLint (`Math.random` ban in `/shared/generators/`), Vite + React + Tailwind CSS.
+1. **Stage 1 — World & Territory Generation (`/shared`)** *(Complete)*
+   - Deterministic `N×N` Continent generator (default `100×100`: elevation, temperature, moisture, single-layer rock types, biomes, single buildable Obelisk).
+   - Deterministic `M×M` Territory generator (default `25×25`: neighbor-interpolated terrain, rivers/lakes, `>= 1` water tile, dry `7×7` settlement zone, strata-matched resource nodes).
+   - Vitest suite verifying seed determinism, bounds, and performance (`15/15` passing).
+2. **Stage 2 — Map Viewport & Dev Visualizer (`/client`)** *(Complete)*
+   - Dual **Gameplay** (surface tile sprites) & **Dev** (heatmap layers, `10×` Territory contrast, `60%` red unbuildable overlay) HTML5 Canvas views with on-screen `+1` frustum culling and clamped pan/zoom.
+   - Full `25×25` Territory primary view + `32px` Continent sidebar overview + live seed/size controls (`24/24` Vitest passing).
 3. **Stage 3 — Buildings (`/shared` + UI preview)**
    - Universal `createBuilding` factory template in `/shared/config/`.
    - Storage (`sizeClass` 1–5), production, degradation/maintenance, and dual upgrade axis (`tier` + `level`) on `7×7` and `5×5` grids.
@@ -72,7 +74,7 @@ We build strictly **one stage at a time**, verifying each stage with automated t
 ---
 
 ## 6. Domain Specifications
-- [architecture_spec.md](file:///mnt/storage/Projects/Dev/Web/Obelisk_dev/docs/architecture_spec.md)
-- [world_spec.md](file:///mnt/storage/Projects/Dev/Web/Obelisk_dev/docs/world_spec.md)
-- [building_spec.md](file:///mnt/storage/Projects/Dev/Web/Obelisk_dev/docs/building_spec.md)
-- [resource_spec.md](file:///mnt/storage/Projects/Dev/Web/Obelisk_dev/docs/resource_spec.md)
+- [architecture_spec.md](./docs/architecture_spec.md)
+- [world_spec.md](./docs/world_spec.md)
+- [building_spec.md](./docs/building_spec.md)
+- [resource_spec.md](./docs/resource_spec.md)

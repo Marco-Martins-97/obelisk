@@ -33,20 +33,23 @@ describe('Stage 1.2: Continent Generator', () => {
     expect(obelisk.biome).not.toBe('mountain');
   });
 
-  it('enforces valid single-layer rock types and north-colder-than-south temperature gradient', () => {
-    const size = 60;
+  it('enforces all single-layer rock types and north-colder-than-south temperature gradient', () => {
+    const size = 100;
     const continent = generateContinent('climate-check', { size });
     const validRocks = new Set(ROCK_TYPES.map((r) => r.id));
+    const observedRocks = new Set();
 
     let northTempSum = 0;
     let southTempSum = 0;
 
     for (const tile of continent.tiles) {
       expect(validRocks.has(tile.rockType)).toBe(true);
+      observedRocks.add(tile.rockType);
       if (tile.y === 0) northTempSum += tile.temperature;
       if (tile.y === size - 1) southTempSum += tile.temperature;
     }
 
+    expect(observedRocks.size).toBe(ROCK_TYPES.length);
     expect(northTempSum / size).toBeLessThan(southTempSum / size);
   });
 

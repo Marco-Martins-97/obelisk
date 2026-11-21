@@ -1,7 +1,10 @@
 import { DEFAULT_TERRITORY_SIZE } from '../config/worldConstants.js';
-import { ELEVATION_BANDS, ROCK_TYPES } from '../config/worldGeology.js';
+import { ELEVATION_BANDS, ORES, ROCK_TYPES } from '../config/worldGeology.js';
 import { createNoise2D, fbm2D } from './noise.js';
 import { createPrng, hashCoords, randomInt } from './prng.js';
+
+/** Minimum forestDensity required for a tile to count as a forest tile. */
+export const TERRITORY_FOREST_THRESHOLD = 0.52;
 
 /**
  * Clamps a numeric value to [0, 1].
@@ -73,7 +76,6 @@ export function getWorldTileContext(continent, x, y) {
  * @returns {number} Interpolated base value.
  */
 function interpolateFromNeighbors(center, north, south, east, west, nx, ny) {
-  // Blend toward neighbor midpoint at each border, equaling center at (0.5, 0.5).
   const northEdge = (center + north) * 0.5;
   const southEdge = (center + south) * 0.5;
   const westEdge = (center + west) * 0.5;
@@ -116,15 +118,18 @@ function carveDownhillRiver(tiles, size, startX, startY, rng) {
     if (!current.inSettlementZone) {
       current.isWater = true;
       current.waterType = 'river';
+      current.forestDensity = 0;
     }
 
-    // Pick the lowest-elevation cardinal neighbor (with slight PRNG tie-break).
     const neighbors = [
       [cx + 1, cy],
       [cx - 1, cy],
       [cx, cy + 1],
       [cx, cy - 1],
-    ].filter(([nx, ny]) => nx >= 0 && nx < size && ny >= 0 && ny < size && !visited.has(ny * size + nx));
+    ].filter(
+      ([nx, ny]) =>
+        nx >= 0 && nx < size && ny >= 0 && ny < size && !visited.has(ny * size + nx),
+    );
 
     if (neighbors.length === 0) break;
 
@@ -154,6 +159,9 @@ function carveDownhillRiver(tiles, size, startX, startY, rng) {
  * Deterministically generates a 25x25 (configurable) Territory grid from a
  * tileSeed and its parent continent neighbor context.
  *
+ * Generates one independent ore-vein density layer per ore hosted by the parent
+ * tile's rockType, scaled by ore rarity (rarer ores form smaller hotspots).
+ *
  * @param {string | number} tileSeed - Deterministic seed for this world tile.
  * @param {{ center: object, north: object, south: object, east: object, west: object }} worldTileContext - Neighbor scalar context.
  * @param {object} [options] - Optional configuration.
@@ -162,6 +170,7 @@ function carveDownhillRiver(tiles, size, startX, startY, rng) {
  *   tileSeed: string | number,
  *   size: number,
  *   rockType: string,
+ *   availableOres: Array<string>,
  *   biome: string,
  *   waterCount: number,
  *   tiles: Array<{
@@ -170,10 +179,12 @@ function carveDownhillRiver(tiles, size, startX, startY, rng) {
  *     elevation: number,
  *     temperature: number,
  *     moisture: number,
+ *     ores: Record<string, number>,
+ *     forestDensity: number,
  *     isWater: boolean,
  *     waterType: 'lake' | 'river' | 'spring' | null,
  *     inSettlementZone: boolean,
- *     resourceNode: { type: string, resourceId: string } | null,
+ *     buildable: boolean,
  *   }>,
  * }} Generated territory grid.
  */
@@ -189,12 +200,45 @@ export function generateTerritory(
   const { center, north, south, east, west } = worldTileContext;
   const elevNoise = createNoise2D(hashCoords(tileSeed, 0, 0, 11));
   const moistNoise = createNoise2D(hashCoords(tileSeed, 0, 0, 12));
+  const forestNoise = createNoise2D(hashCoords(tileSeed, 0, 0, 14));
   const rng = createPrng(hashCoords(tileSeed, 0, 0, 13));
 
   const rockInfo = ROCK_TYPES.find((r) => r.id === center.rockType) ?? ROCK_TYPES[0];
-  const maxCoord = Math.max(1, size - 1);
+  const availableOres = rockInfo.ores;
 
-  // Reserve central 7x7 footprint (or scaled down for tiny test grids) for settlement buildings.
+  // Build independent hotspot veins + noise sampler for each ore in this rock type.
+  const oreConfigs = availableOres.map((oreId, idx) => {
+    const oreMeta = ORES[oreId] ?? ORES.copper;
+    const oreRng = createPrng(hashCoords(tileSeed, idx, 0, 200));
+    const veinCount = oreMeta.rarity === 'very_rare' || oreMeta.rarity === 'rare' ? 1 : randomInt(oreRng, 1, 2);
+    const radius = Math.max(1.2, size * oreMeta.veinRadiusScale);
+
+    const veins = Array.from({ length: veinCount }, () => ({
+      vx: randomInt(oreRng, 0, size - 1),
+      vy: randomInt(oreRng, 0, size - 1),
+      radius,
+      strength: 0.72 + oreRng() * 0.28,
+    }));
+
+    return {
+      oreId,
+      veins,
+      noise: createNoise2D(hashCoords(tileSeed, idx, 0, 300)),
+    };
+  });
+
+  const biomeForestBias =
+    center.biome === 'tropical_forest'
+      ? 0.72
+      : center.biome === 'temperate_forest'
+        ? 0.62
+        : center.biome === 'taiga'
+          ? 0.55
+          : center.biome === 'savanna' || center.biome === 'grassland'
+            ? 0.28
+            : 0.05;
+
+  const maxCoord = Math.max(1, size - 1);
   const centerCoord = Math.floor(size / 2);
   const halfFootprint = size >= 9 ? 3 : 0;
 
@@ -239,7 +283,9 @@ export function generateTerritory(
       const moistJitter = (fbm2D(moistNoise, x, y, { scale: 0.14, octaves: 2 }) - 0.5) * 0.14;
 
       const elevation = clamp01(baseElev + elevJitter);
-      const temperature = clamp01(baseTemp - Math.max(0, elevation - ELEVATION_BANDS.SEA_LEVEL) * 0.15);
+      const temperature = clamp01(
+        baseTemp - Math.max(0, elevation - ELEVATION_BANDS.SEA_LEVEL) * 0.15,
+      );
       const moisture = clamp01(baseMoist + moistJitter);
 
       const inSettlementZone =
@@ -247,9 +293,35 @@ export function generateTerritory(
         Math.abs(x - centerCoord) <= halfFootprint &&
         Math.abs(y - centerCoord) <= halfFootprint;
 
-      // Local lakes form in low pockets outside the central settlement zone.
       const lakeThreshold = ELEVATION_BANDS.SEA_LEVEL - 0.04 + moisture * 0.06;
       const isLake = !inSettlementZone && elevation < lakeThreshold;
+
+      // Compute independent ore density [0, 1] for each ore allowed by rockType.
+      const ores = {};
+      for (const cfg of oreConfigs) {
+        let peakSignal = 0;
+        for (const v of cfg.veins) {
+          const distSq = (x - v.vx) ** 2 + (y - v.vy) ** 2;
+          const falloff = Math.exp(-distSq / (2 * v.radius * v.radius));
+          peakSignal = Math.max(peakSignal, falloff * v.strength);
+        }
+        const oreJitter = fbm2D(cfg.noise, x, y, { scale: 0.22, octaves: 2 }) * 0.18;
+        ores[cfg.oreId] = clamp01(peakSignal * 0.85 + oreJitter);
+      }
+
+      const rawForest =
+        isLake || inSettlementZone || elevation >= ELEVATION_BANDS.MOUNTAIN_LEVEL
+          ? 0
+          : clamp01(
+              biomeForestBias * 0.65 +
+                fbm2D(forestNoise, x, y, { scale: 0.18, octaves: 3 }) * 0.55 -
+                0.2,
+            );
+
+      const buildable =
+        !isLake &&
+        elevation >= ELEVATION_BANDS.SEA_LEVEL &&
+        elevation < ELEVATION_BANDS.MOUNTAIN_LEVEL;
 
       const idx = y * size + x;
       tiles[idx] = {
@@ -258,10 +330,12 @@ export function generateTerritory(
         elevation,
         temperature,
         moisture,
+        ores,
+        forestDensity: rawForest,
         isWater: isLake,
         waterType: isLake ? 'lake' : null,
         inSettlementZone,
-        resourceNode: null,
+        buildable,
       };
 
       if (!inSettlementZone && !isLake && elevation < lowestDryElevation) {
@@ -271,7 +345,6 @@ export function generateTerritory(
     }
   }
 
-  // Carve a deterministic river/stream when territory moisture is moderate or high.
   if (size >= 5 && center.moisture >= 0.35) {
     const startSide = randomInt(rng, 0, 3);
     const edgeCoord = randomInt(rng, 0, size - 1);
@@ -280,40 +353,91 @@ export function generateTerritory(
     carveDownhillRiver(tiles, size, startX, startY, rng);
   }
 
-  // Guarantee at least 1 tile of water per territory (spring/oasis fallback).
   let waterCount = tiles.reduce((acc, t) => acc + (t.isWater ? 1 : 0), 0);
   if (waterCount === 0) {
     const fallbackIdx = lowestDryIdx !== -1 ? lowestDryIdx : 0;
     tiles[fallbackIdx].isWater = true;
     tiles[fallbackIdx].waterType = 'spring';
+    tiles[fallbackIdx].forestDensity = 0;
+    tiles[fallbackIdx].buildable = false;
     waterCount = 1;
   }
 
-  // Scatter local resource nodes on non-water tiles outside the settlement zone.
-  const isForested = ['temperate_forest', 'taiga', 'tropical_forest'].includes(center.biome);
-  const isFertile = ['grassland', 'temperate_forest', 'savanna'].includes(center.biome);
+  for (let i = 0; i < tiles.length; i += 1) {
+    if (tiles[i].isWater) {
+      tiles[i].buildable = false;
+    }
+  }
+
+  // Compute Territory moisture from distance to water tiles (multi-source BFS).
+  const dist = new Int32Array(size * size).fill(-1);
+  const queue = [];
+  for (let i = 0; i < tiles.length; i += 1) {
+    if (tiles[i].isWater) {
+      dist[i] = 0;
+      queue.push(i);
+    }
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const idx = queue[head];
+    head += 1;
+    const cx = idx % size;
+    const cy = (idx - cx) / size;
+    const nextDist = dist[idx] + 1;
+
+    const neighbors = [
+      [cx + 1, cy],
+      [cx - 1, cy],
+      [cx, cy + 1],
+      [cx, cy - 1],
+    ];
+    for (const [nx, ny] of neighbors) {
+      if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
+      const nIdx = ny * size + nx;
+      if (dist[nIdx] === -1) {
+        dist[nIdx] = nextDist;
+        queue.push(nIdx);
+      }
+    }
+  }
 
   for (let i = 0; i < tiles.length; i += 1) {
-    const tile = tiles[i];
-    if (tile.isWater || tile.inSettlementZone) continue;
+    const t = tiles[i];
+    const d = dist[i] === -1 ? size : dist[i];
+    const waterProximity = Math.exp(-d / 4.5);
+    const localJitter = fbm2D(moistNoise, t.x, t.y, { scale: 0.2, octaves: 2 }) * 0.12;
+    t.moisture = t.isWater ? 1 : clamp01(waterProximity * 0.88 + localJitter);
+  }
 
-    const roll = rng();
-    if (roll < 0.025) {
-      const oreId = rockInfo.ores[randomInt(rng, 0, rockInfo.ores.length - 1)];
-      tile.resourceNode = { type: 'ore_vein', resourceId: oreId };
-    } else if (roll < 0.06) {
-      tile.resourceNode = { type: 'surface_rock', resourceId: rockInfo.id };
-    } else if (isForested && roll < 0.16) {
-      tile.resourceNode = { type: 'timber', resourceId: 'wood' };
-    } else if (isFertile && roll < 0.1) {
-      tile.resourceNode = { type: 'wild_crop', resourceId: 'grain' };
+  // Guarantee at least 1 forest tile per territory outside water and the settlement zone.
+  let hasForest = false;
+  let bestForestCandidateIdx = -1;
+  let bestForestScore = -1;
+
+  for (let i = 0; i < tiles.length; i += 1) {
+    const t = tiles[i];
+    if (t.isWater || t.inSettlementZone) continue;
+    if (t.forestDensity >= TERRITORY_FOREST_THRESHOLD) {
+      hasForest = true;
+      break;
     }
+    if (t.forestDensity >= bestForestScore) {
+      bestForestScore = t.forestDensity;
+      bestForestCandidateIdx = i;
+    }
+  }
+
+  if (!hasForest && bestForestCandidateIdx !== -1) {
+    tiles[bestForestCandidateIdx].forestDensity = 0.65;
   }
 
   return {
     tileSeed,
     size,
     rockType: rockInfo.id,
+    availableOres,
     biome: center.biome,
     waterCount,
     tiles,
