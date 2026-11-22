@@ -15,7 +15,7 @@ All resources live in `/shared/config/resources.js` via `createResource()`, and 
 - **Population (`0/10`):** `10` available population capacity, `0` units trained at spawn.
 
 ### Gathering (`gatherer` Unit — Timed & Probabilistic)
-Each unit (`gatherer`, `hunter`, `builder`) has a movement speed in `km/h` (`1 territory sub-tile = 1 km`). Total action duration = **`outbound travel (MAIN → tile) + action work time + return travel (tile → MAIN)`**. Every gather/hunt roll is probabilistic and may occasionally return nothing:
+Each unit (`gatherer`, `hunter`, `builder`) has a movement speed in `km/h` (`1 territory sub-tile = 500m` / `0.5 km`). Total action duration = **`outbound travel (MAIN → tile) + action work time + return travel (tile → MAIN)`**. Every gather/hunt roll is probabilistic and may occasionally return nothing:
 
 | Territory Tile Type | Action | Possible Yields |
 | :--- | :--- | :--- |
@@ -35,7 +35,7 @@ Round-trip timed action (`outbound + hunt + return`) with probabilistic yields:
 
 ### Stone Age Crafted Items, Tools & Age Evolution
 - **Starter Tool Upgrade:** `wood_tool` → `stone_tool` at the **`FIREPIT`**.
-- **Cooked Food:** Raw `meat` cooked at the **`FIREPIT`**.
+- **Cooked Food:** Raw `meat` → `cooked_meat` and raw `fish` → `cooked_fish` cooked at the **`FIREPIT`**.
 - **Fuel:** `sticks` and `charcoal` (crafted at the **`KILN`**).
 - **Copper Age Evolution Requirement:** Smelt **`10 copper_nuggets` → `1 copper_ingot`** in the **`KILN`**.
 

@@ -30,8 +30,8 @@
 ## 3. Settlements, Map Exploration & Auto-Zoom
 - **Capital (`7×7` grid):** A player may **upgrade** only **1** settlement to a `7×7` Capital.
 - **Cities / Villages (`5×5` grid):** Players can hold multiple `5×5` settlements.
-- **Territory Exploration (`25×25`, `1 tile = 1 km`):** Starts with the central **`7×7`** revealed (viewport zoomed in to the explored area). Actions target an **already-explored (`1`) tile `x`** and upon completion reveal the **`3×3` box `[x-1..x+1, y-1..y+1]`** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically.
-- **Continent Exploration (`100×100`, `1 tile = 25 km`):** Starts with **`1` tile** (the player's village, zoomed in). Fully exploring all `25×25` tiles of the home Territory unlocks a **`1`-tile ring (`3×3`)** around the village on the Continent. Each subsequent Continent tile explored (via expeditions) unlocks a **`3×3` area** and zooms out dynamically.
+- **Territory Exploration (`25×25`, `1 tile = 500m` [`0.5 km`]):** Starts with the central **`7×7`** revealed (viewport zoomed in to the explored area). Actions target an **already-explored (`1`) tile `x`** and upon completion reveal the **`3×3` box `[x-1..x+1, y-1..y+1]`** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically.
+- **Continent Exploration (`100×100`, `1 tile = 12.5 km`):** Starts with **`1` tile** (the player's village, zoomed in). Fully exploring all `25×25` tiles of the home Territory unlocks a **`1`-tile ring (`3×3`)** around the village on the Continent. Each subsequent Continent tile explored (via expeditions) unlocks a **`3×3` area** and zooms out dynamically.
 - **3 Acquisition Paths** *(mechanics deferred to a later stage)*:
   1. Conquer another player's city/village.
   2. Conquer an abandoned village.
@@ -64,7 +64,7 @@ We build strictly **one stage/age at a time**—completing buildings, units, res
    - Dual **Gameplay** (surface tile sprites) & **Dev** (heatmap layers, `10×` Territory contrast, `60%` red unbuildable overlay) HTML5 Canvas views with on-screen `+1` frustum culling and clamped pan/zoom.
 3. **Stage 3 — Stone Age Vertical Slice** *(Next)*
    - **Starter Spawn:** Central N-S band (`30%–70%`) across full W-E range with 1 pre-placed `MAIN` building (`storage: 50/100` [`10 sticks`, `10 pelts`, `5 small_stones` at `small: 2`], `pop: 0/10`, `food: 5`, `water: 5/10` bowls [`1 jar = 10 bowls`], starter `wood_tool`).
-   - **Stone Age Buildings (Tier 1 Only, Level Upgradable — `MAIN`, `FIREPIT`, `HOUSE` +10 pop/lv max 3, `KILN`):** Timed construction (`outbound travel MAIN→tile + buildTime + return travel tile→MAIN`, `1 tile = 1 km`) consuming materials, employing workers (`popUsed`), and locking `>= 1` `builder` until return.
+   - **Stone Age Buildings (Tier 1 Only, Level Upgradable — `MAIN`, `FIREPIT`, `HOUSE` +10 pop/lv max 3, `KILN`):** Timed construction (`outbound travel MAIN→tile + buildTime + return travel tile→MAIN`, `1 tile = 500m` / `0.5 km`) consuming materials, employing workers (`popUsed`), and locking `>= 1` `builder` until return.
    - **Stone Age Units (`gatherer`, `hunter`, `builder`):** Speed-based (`km/h`) round-trip actions with probabilistic tile-specific yields across Fields, Water (including `1 jar` water collection & non-flux/coal ore panning), and Forest.
    - **Online vs. Sandbox UI Split:** Top Navbar switches between **Sandbox (`/sandbox`)** and **Online (`/`)**—Online shows large Territory, small Continent, coordinate-only tooltips (no Dev/tile metrics), left-click building menu/timer (`"Building..."`), and right-click action menu (`red` = cannot build, `grey` = insufficient resources).
    - **Progression & Calendar:** Tool upgrade (`wood -> stone` at `FIREPIT`), lazy daily food/water survival per `popUsed`, Day/Night clock, `7×7 → 25×25` border-tile `3×3` reveal, and **Copper Age Evolution** (`10 copper_nuggets` → `1 copper_ingot` at `KILN`).

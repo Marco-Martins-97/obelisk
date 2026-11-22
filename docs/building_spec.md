@@ -29,7 +29,7 @@ MongoDB stores only dynamic building instances per settlement:
 | Building | Role & Starting State | Levels | Workers / Builders & Lv 1 Cost |
 | :--- | :--- | :--- | :--- |
 | **`MAIN`** | Pre-placed village center at `(12, 12)`. Provides starting `storage: 50/100` (`10 sticks`, `10 pelts`, `5 small_stones`), `pop: 0/10`, `food: 5`, and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1+` | Pre-built at village founding |
-| **`FIREPIT`** | Cooks raw `meat` and upgrades starter tools (`wood_tool` → `stone_tool`). | `1+` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` |
+| **`FIREPIT`** | Cooks raw `meat` → `cooked_meat`, `fish` → `cooked_fish`, and upgrades starter tools (`wood_tool` → `stone_tool`). | `1+` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` |
 | **`HOUSE`** | Increases maximum settlement population by **`+10` per level**. | `1..3` | `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 6, pelts: 4, straw: 4 }` |
 | **`KILN`** | Crafts `charcoal` and smelts `10 copper_nuggets` into `1 copper_ingot` to unlock **Copper Age** evolution. | `1+` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` |
 
@@ -37,7 +37,7 @@ MongoDB stores only dynamic building instances per settlement:
 
 ## 3. Core Building & Interaction Rules
 1. **Round-Trip Construction Lifecycle & Population Usage:**
-   - Creating a building consumes materials, employs `workersRequired` population, and locks `>= 1` `builder` across a round-trip lifecycle (`1 tile = 1 km` from `MAIN (12, 12)` to target `(x, y)`):
+   - Creating a building consumes materials, employs `workersRequired` population, and locks `>= 1` `builder` across a round-trip lifecycle (`1 tile = 500m` / `0.5 km` from `MAIN (12, 12)` to target `(x, y)`):
      - **Outbound Travel (`t_travel`):** Builder walks `MAIN → tile`.
      - **Construction (`t_build`):** Building finishes at `now + t_travel + t_build`.
      - **Return Travel (`t_travel`):** Builder walks `tile → MAIN` and becomes available again only at `now + 2 * t_travel + t_build`.

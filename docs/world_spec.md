@@ -1,8 +1,8 @@
 # World & Territory Specification (Stages 1 & 2)
 
 ## 1. World Hierarchy, Distance Scale & The `25×` Scale Law
-- **Continent (World Map):** Configurable `N × N` grid (default `100 × 100` = `10,000` world tiles, coordinates `(0,0)` to `(99,99)`; `1 continent tile = 25 km × 25 km`).
-- **Territory (Regional Zone):** Each world tile expands into a configurable `M × M` regional grid (default `25 × 25` = `625` sub-tiles, coordinates `(0,0)` to `(24,24)`; **`1 territory sub-tile = 1 km`**).
+- **Continent (World Map):** Configurable `N × N` grid (default `100 × 100` = `10,000` world tiles, coordinates `(0,0)` to `(99,99)`; `1 continent tile = 12.5 km × 12.5 km`).
+- **Territory (Regional Zone):** Each world tile expands into a configurable `M × M` regional grid (default `25 × 25` = `625` sub-tiles, coordinates `(0,0)` to `(24,24)`; **`1 territory sub-tile = 500m` (`0.5 km`)**).
 - **Seed Derivation:**
   - Server holds `masterWorldSeed` (secret).
   - Each world tile derives `tileSeed = hashCoords(masterWorldSeed, x, y)`.
@@ -54,5 +54,5 @@ A fixed top Navbar switches between two separate pages:
   - **Left-Click:** Selects a building—shows `"Building..."` + countdown if under construction, or opens the Building Menu when built.
   - **Right-Click:** Opens the Action Menu (`Gather`, `Collect Water`, `Hunt`, `Build →` with red = cannot build / grey = missing resources).
   - **Progressive Exploration & Auto-Zoom:**
-    - **Territory (`25×25`, `1 tile = 1 km`):** Starts with central **`7×7`** revealed and zoomed in. Actions target an already-explored (`1`) tile `x` and upon completion reveal the **`3×3` area** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically to fit explored bounds.
-    - **Continent (`100×100`, `1 tile = 25 km`):** Starts with **`1` tile** (home village, zoomed in); revealing all `25×25` tiles of the home Territory unlocks a **`1`-tile ring (`3×3`)** around the village; subsequent Continent exploration reveals **`3×3` areas** around explored targets and zooms out dynamically.
+    - **Territory (`25×25`, `1 tile = 500m` [`0.5 km`]):** Starts with central **`7×7`** revealed and zoomed in. Actions target an already-explored (`1`) tile `x` and upon completion reveal the **`3×3` area** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically to fit explored bounds.
+    - **Continent (`100×100`, `1 tile = 12.5 km`):** Starts with **`1` tile** (home village, zoomed in); revealing all `25×25` tiles of the home Territory unlocks a **`1`-tile ring (`3×3`)** around the village; subsequent Continent exploration reveals **`3×3` areas** around explored targets and zooms out dynamically.
