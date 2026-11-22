@@ -12,22 +12,26 @@
 
 ---
 
-## 2. Time & Season Scale (`6×` Real Time)
+## 2. Time, Calendar & Day/Night Scale (`6×` Real Time)
 | Unit | In-Game Duration | Real-Time Equivalent |
 | :--- | :--- | :--- |
-| **1 Day** | 1 in-game day | **4 hours** |
+| **1 Day** | 1 in-game day (1 Day/Night cycle) | **4 hours** |
 | **1 Real Day** | 6 in-game days | **24 hours** |
-| **1 Month** | 28 in-game days | **112 hours** (~4.67 real days) |
-| **1 Season** | 3 in-game months (84 days) | **14 real days** (2 real weeks) |
-| **1 Year** | 4 seasons (336 days) | **56 real days** (~8 real weeks) |
+| **1 Lunar Month** | 28 in-game days (1 lunar cycle) | **112 hours** (~4.67 real days) |
+| **1 Season** | 3 lunar months (84 days) | **14 real days** (2 real weeks) |
+| **1 Year** | 4 seasons / 12 months (336 days) | **56 real days** (~8 real weeks) |
 
-Seasons cycle through **Spring → Summer → Autumn → Winter**, affecting temperature, crop growth, spoilage rates, and expedition preparation requirements.
+- **Seasons:** Cycle continuously through **Spring → Summer → Autumn → Winter**, affecting temperature, crop growth, spoilage rates, and expedition preparation requirements.
+- **Day / Night Cycle:** Continuous cycle inside each 4-hour in-game day (visual/state clock only in Stone Age; no gameplay penalty yet).
+- **Daily Survival Tick (Lazy Evaluation):** Food consumption, water consumption, and perishable decay are calculated per in-game day from `lastUpdated` timestamps. Consumption equals **`popUsed`** (active units + workers employed in buildings), not `popCapacity` (e.g., `7/10` pop consumes `7` food and `7` water bowls per day; `0/10` consumes `0`).
 
 ---
 
-## 3. Settlements & Expansion
+## 3. Settlements, Map Exploration & Auto-Zoom
 - **Capital (`7×7` grid):** A player may **upgrade** only **1** settlement to a `7×7` Capital.
 - **Cities / Villages (`5×5` grid):** Players can hold multiple `5×5` settlements.
+- **Territory Exploration (`25×25`, `1 tile = 1 km`):** Starts with the central **`7×7`** revealed (viewport zoomed in to the explored area). Actions target an **already-explored (`1`) tile `x`** and upon completion reveal the **`3×3` box `[x-1..x+1, y-1..y+1]`** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically.
+- **Continent Exploration (`100×100`, `1 tile = 25 km`):** Starts with **`1` tile** (the player's village, zoomed in). Fully exploring all `25×25` tiles of the home Territory unlocks a **`1`-tile ring (`3×3`)** around the village on the Continent. Each subsequent Continent tile explored (via expeditions) unlocks a **`3×3` area** and zooms out dynamically.
 - **3 Acquisition Paths** *(mechanics deferred to a later stage)*:
   1. Conquer another player's city/village.
   2. Conquer an abandoned village.
@@ -48,28 +52,28 @@ Seasons cycle through **Spring → Summer → Autumn → Winter**, affecting tem
 
 ---
 
-## 5. Staged Build Roadmap
-We build strictly **one stage at a time**, verifying each stage with automated tests before moving on:
+## 5. Staged Build Roadmap (Age-by-Age Vertical Slices)
+We build strictly **one stage/age at a time**—completing buildings, units, resources, recipes, and gameplay mechanics together for each era so players always have a complete playable progression loop:
 
 0. **Stage 0 — Monorepo & Tooling Bootstrap** *(Complete)*
    - npm workspaces (`shared`, `client`, `server`), pure ESM, Vitest, ESLint (`Math.random` ban in `/shared/generators/`), Vite + React + Tailwind CSS.
 1. **Stage 1 — World & Territory Generation (`/shared`)** *(Complete)*
-   - Deterministic `N×N` Continent generator (default `100×100`: elevation, temperature, moisture, single-layer rock types, biomes, single buildable Obelisk).
-   - Deterministic `M×M` Territory generator (default `25×25`: neighbor-interpolated terrain, rivers/lakes, `>= 1` water tile, dry `7×7` settlement zone, strata-matched resource nodes).
-   - Vitest suite verifying seed determinism, bounds, and performance (`15/15` passing).
+   - Deterministic `N×N` Continent generator (default `100×100`: elevation, temperature, moisture, single-layer rock provinces, biomes, single buildable Obelisk).
+   - Deterministic `M×M` Territory generator (default `25×25`: neighbor-interpolated terrain, rivers/lakes, `>= 1` water tile, water-distance moisture, `>= 1` forest tile, rarity-scaled per-ore layers, dry `7×7` settlement zone).
 2. **Stage 2 — Map Viewport & Dev Visualizer (`/client`)** *(Complete)*
    - Dual **Gameplay** (surface tile sprites) & **Dev** (heatmap layers, `10×` Territory contrast, `60%` red unbuildable overlay) HTML5 Canvas views with on-screen `+1` frustum culling and clamped pan/zoom.
-   - Full `25×25` Territory primary view + `32px` Continent sidebar overview + live seed/size controls (`24/24` Vitest passing).
-3. **Stage 3 — Buildings (`/shared` + UI preview)**
-   - Universal `createBuilding` factory template in `/shared/config/`.
-   - Storage (`sizeClass` 1–5), production, degradation/maintenance, and dual upgrade axis (`tier` + `level`) on `7×7` and `5×5` grids.
-4. **Stage 4 — Resources (`/shared`)**
-   - Universal `createResource` factory template in `/shared/config/`.
-   - TFC-inspired resource categories, `sizeClass` bulk capacity, lazy food spoilage, fuel burn, and trade definitions.
-5. **Stage 5 — Persistence, Auth & Lazy State (`/server`)**
-   - Express API, MongoDB Atlas sparse schemas (no bulk terrain storage), JWT/session auth, and lazy delta calculators.
-6. **Stage 6 — Real-Time, Expeditions & Trading (`/server` + `/client`)**
-   - Socket.io live updates, BullMQ scheduled events (expeditions, Obelisk exploration, Tribal Wars-style marketplace & caravans), Fog of War enforcement.
+3. **Stage 3 — Stone Age Vertical Slice** *(Next)*
+   - **Starter Spawn:** Central N-S band (`30%–70%`) across full W-E range with 1 pre-placed `MAIN` building (`storage: 50/100` [`10 sticks`, `10 pelts`, `5 small_stones` at `small: 2`], `pop: 0/10`, `food: 5`, `water: 5/10` bowls [`1 jar = 10 bowls`], starter `wood_tool`).
+   - **Stone Age Buildings (Tier 1 Only, Level Upgradable — `MAIN`, `FIREPIT`, `HOUSE` +10 pop/lv max 3, `KILN`):** Timed construction (`outbound travel MAIN→tile + buildTime + return travel tile→MAIN`, `1 tile = 1 km`) consuming materials, employing workers (`popUsed`), and locking `>= 1` `builder` until return.
+   - **Stone Age Units (`gatherer`, `hunter`, `builder`):** Speed-based (`km/h`) round-trip actions with probabilistic tile-specific yields across Fields, Water (including `1 jar` water collection & non-flux/coal ore panning), and Forest.
+   - **Online vs. Sandbox UI Split:** Top Navbar switches between **Sandbox (`/sandbox`)** and **Online (`/`)**—Online shows large Territory, small Continent, coordinate-only tooltips (no Dev/tile metrics), left-click building menu/timer (`"Building..."`), and right-click action menu (`red` = cannot build, `grey` = insufficient resources).
+   - **Progression & Calendar:** Tool upgrade (`wood -> stone` at `FIREPIT`), lazy daily food/water survival per `popUsed`, Day/Night clock, `7×7 → 25×25` border-tile `3×3` reveal, and **Copper Age Evolution** (`10 copper_nuggets` → `1 copper_ingot` at `KILN`).
+4. **Stage 4 — Copper Age**
+   - Prospector teams & surface mines, copper tools/weapons, expanded storage and settlement perimeters.
+5. **Stage 5 — Bronze Age**
+   - Tin + copper alloying, bloomery & smithy, Tribal Wars-style marketplace and timed `sizeClass` caravans.
+6. **Stage 6 — Iron & Steel Ages + The Obelisk**
+   - Deep mining, blast furnace, distant world expeditions, settlement founding/conquest, and Obelisk exploration.
 
 ---
 
