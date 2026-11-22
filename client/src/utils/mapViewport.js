@@ -153,3 +153,56 @@ export function zoomAtPoint({
 
   return { offsetX: rawX, offsetY: rawY };
 }
+
+/**
+ * Computes clamped pan offsets and tileSize zooming to fit an explored bounding box
+ * inside the canvas with a comfortable margin of `paddingTiles`.
+ *
+ * @param {object} params - Viewport and explored bounds.
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number, width: number, height: number, exploredCount: number }} params.bounds
+ * @param {number} params.canvasWidth - Canvas width in CSS pixels.
+ * @param {number} params.canvasHeight - Canvas height in CSS pixels.
+ * @param {number} params.gridSize - Total grid tiles along one axis.
+ * @param {number} params.minTileSize - Minimum allowed tileSize.
+ * @param {number} params.maxTileSize - Maximum allowed tileSize.
+ * @param {number} [params.paddingTiles=1] - Extra tile margin around explored bounds.
+ * @returns {{ tileSize: number, offsetX: number, offsetY: number }} Fitted clamped viewport.
+ */
+export function getViewportForBounds({
+  bounds,
+  canvasWidth,
+  canvasHeight,
+  gridSize,
+  minTileSize,
+  maxTileSize,
+  paddingTiles = 1,
+}) {
+  if (!bounds || bounds.exploredCount <= 0) {
+    return { tileSize: minTileSize, offsetX: 0, offsetY: 0 };
+  }
+
+  const spanX = bounds.width + paddingTiles * 2;
+  const spanY = bounds.height + paddingTiles * 2;
+  const fitSize = Math.min(canvasWidth / spanX, canvasHeight / spanY);
+  const tileSize = Math.max(
+    minTileSize,
+    Math.min(maxTileSize, Math.round(fitSize * 100) / 100),
+  );
+
+  const centerWorldX = (bounds.minX + bounds.maxX + 1) / 2;
+  const centerWorldY = (bounds.minY + bounds.maxY + 1) / 2;
+  const rawX = canvasWidth / 2 - centerWorldX * tileSize;
+  const rawY = canvasHeight / 2 - centerWorldY * tileSize;
+
+  return {
+    tileSize,
+    ...clampPanOffsets({
+      offsetX: rawX,
+      offsetY: rawY,
+      tileSize,
+      canvasWidth,
+      canvasHeight,
+      gridSize,
+    }),
+  };
+}

@@ -23,6 +23,7 @@ import {
   calculateMaxPopulation,
   calculatePopUsed,
   calculateStorageUsed,
+  calculateTeamActionTimestamps,
   calculateTileDistanceKm,
   calculateUnitActionTimestamps,
   canBuildOrUpgradeBuilding,
@@ -34,10 +35,15 @@ import {
   createResource,
   createTechnology,
   createUnit,
+  generateContinent,
   getBestUnlockedTool,
   getCalendarState,
+  getExploredBounds,
   getMainTierChangeRule,
+  getTaskPhase,
   isTechTriggerSatisfied,
+  pickStarterSpawnTile,
+  resolveTeamActionYield,
   revealBox3x3,
   rollTileActionYield,
   unlockContinentRingIfTerritoryComplete,
@@ -63,7 +69,8 @@ describe('Stone Age templates, starter pools & linear sizeClass', () => {
     expect(RESOURCES.straw.sizeClass).toBe(2);
     expect(RESOURCES.cooked_fish.edible).toBe(true);
     expect(calculateStorageUsed(STARTER_INVENTORY)).toBe(50);
-    expect(STARTER_VILLAGE_POOLS.storageCapacity).toBe(100);
+    expect(STARTER_VILLAGE_POOLS.storageCapacity).toBe(250);
+    expect(BUILDINGS.main.storageBonusPerLevel).toBe(250);
     expect(STARTER_VILLAGE_POOLS.water).toBe(5);
     expect(STARTER_VILLAGE_POOLS.waterCapacity).toBe(10);
   });
@@ -377,7 +384,61 @@ describe('Probabilistic tile yields, collect_water & biome classification', () =
     ).toThrow(RangeError);
     expect(() =>
       rollTileActionYield({ unitId: 'hunter', action: 'collect_water', tile: waterTile, rng: () => 0.5 }),
-    ).toThrow(Error);
+    ).not.toThrow();
+    expect(UNITS.hunter.allowedActions).toContain('collect_water');
+  });
+
+  it('calculates mixed-team slowest speed, action-filtered yields, and Going/Doing/Returning phases', () => {
+    // 2 Gatherers (5 km/h) + 1 Hunter (6 km/h) -> marches at slowest 5 km/h.
+    const mixedTiming = calculateTeamActionTimestamps({
+      from: { x: 12, y: 12 },
+      to: { x: 12, y: 22 },
+      units: { gatherer: 2, hunter: 1 },
+      nowMs: 1_000,
+    });
+    expect(mixedTiming.teamSpeedKmPerHour).toBe(5);
+    expect(mixedTiming.oneWayTravelMs).toBe(REAL_MS_PER_INGAME_HOUR);
+
+    expect(getTaskPhase(mixedTiming, 1_500)).toMatchObject({ phase: 'going', phaseLabel: 'Traveling' });
+    expect(
+      getTaskPhase({ ...mixedTiming, completedAtMs: mixedTiming.workCompletedAtMs }, mixedTiming.arrivesAtMs + 100),
+    ).toMatchObject({ phase: 'doing', phaseLabel: 'Working' });
+    expect(
+      getTaskPhase({ ...mixedTiming, completedAtMs: mixedTiming.workCompletedAtMs }, mixedTiming.workCompletedAtMs + 100),
+    ).toMatchObject({ phase: 'returning', phaseLabel: 'Returning' });
+
+    const fieldsTile = { isWater: false, forestDensity: 0.1 };
+    const waterTile = { isWater: true, forestDensity: 0 };
+    const rng = createPrng(4242);
+
+    // Choose gather on a 2G + 1H team -> only 2 Gatherers roll.
+    const gatherRes = resolveTeamActionYield({
+      units: { gatherer: 2, hunter: 1 },
+      action: 'gather',
+      tile: fieldsTile,
+      rng,
+    });
+    expect(gatherRes.rollsExecuted).toBe(2);
+
+    // Choose collect_water on a 2G + 1H team -> all 3 units collect 1 jar each (30 bowls).
+    const waterRes = resolveTeamActionYield({
+      units: { gatherer: 2, hunter: 1 },
+      action: 'collect_water',
+      tile: waterTile,
+      rng,
+    });
+    expect(waterRes.rollsExecuted).toBe(3);
+    expect(waterRes.waterBowls).toBe(30);
+
+    // Smart Role Assignment ('team') runs Gatherer rolls + Hunter rolls + Water hauling together.
+    const combinedTeamRes = resolveTeamActionYield({
+      units: { gatherer: 2, hunter: 1, water: 1 },
+      action: 'team',
+      tile: waterTile,
+      rng,
+    });
+    expect(combinedTeamRes.rollsExecuted).toBe(4);
+    expect(combinedTeamRes.waterBowls).toBe(10);
   });
 
   it('produces biome-appropriate Stone Age drops deterministically with seeded PRNG', () => {
@@ -482,5 +543,32 @@ describe('7x7 starter fog, 3x3 border expansion & Continent ring unlock', () => 
     expect(unlocked.newlyRevealedCount).toBe(8);
     expect(unlocked.fog[49 * 100 + 49]).toBe(1);
     expect(unlocked.fog[51 * 100 + 51]).toBe(1);
+  });
+
+  it('picks a deterministic buildable starter tile in the 30%..70% central N-S band and computes explored bounds', () => {
+    expect(UNITS.gatherer.trainingTimeHours).toBe(0);
+    expect(UNITS.hunter.trainingTimeHours).toBe(0);
+    expect(UNITS.builder.trainingTimeHours).toBe(0);
+
+    const continent = generateContinent('spawn-test-seed', { size: 40 });
+    const spawnA = pickStarterSpawnTile(continent, 'spawn-test-seed');
+    const spawnB = pickStarterSpawnTile(continent, 'spawn-test-seed');
+
+    expect(spawnA).toEqual(spawnB);
+    expect(spawnA.buildable).toBe(true);
+    expect(spawnA.isObelisk).toBe(false);
+    expect(spawnA.y).toBeGreaterThanOrEqual(Math.floor(40 * 0.3));
+    expect(spawnA.y).toBeLessThanOrEqual(Math.ceil(40 * 0.7) - 1);
+
+    const fog = createInitialTerritoryFog(25);
+    expect(getExploredBounds(fog, 25)).toEqual({
+      minX: 9,
+      maxX: 15,
+      minY: 9,
+      maxY: 15,
+      width: 7,
+      height: 7,
+      exploredCount: 49,
+    });
   });
 });

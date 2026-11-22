@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/* Prevent background page scroll-chaining behind native modal dialogs. */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}

@@ -102,9 +102,9 @@ export const BUILDINGS = Object.freeze({
     maxCount: 1,
     maxLevel: 3,
     workersRequired: 0,
-    buildersRequired: 0,
-    buildTimeHours: 0,
-    cost: {},
+    buildersRequired: 1,
+    buildTimeHours: 2.5,
+    cost: { sticks: 6, small_stones: 5, pelts: 4 },
     tierUpgrades: {
       2: {
         targetAge: 'copper',
@@ -114,7 +114,7 @@ export const BUILDINGS = Object.freeze({
         cost: { small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 },
       },
     },
-    storageBonusPerLevel: 100,
+    storageBonusPerLevel: 250,
     popBonusPerLevel: 10,
     waterCapacity: 10,
     trainsUnits: ['gatherer', 'hunter', 'builder'],

@@ -243,7 +243,7 @@ export const PANNABLE_ORE_NUGGETS = Object.freeze(
 
 /**
  * Starter inventory stored inside the Main building at spawn:
- * 10 sticks (20) + 10 pelts (20) + 5 small_stones (10) = 50 / 100 bulk capacity.
+ * 10 sticks (20) + 10 pelts (20) + 5 small_stones (10) = 50 / 250 bulk capacity.
  */
 export const STARTER_INVENTORY = Object.freeze({
   sticks: 10,
@@ -255,7 +255,7 @@ export const STARTER_INVENTORY = Object.freeze({
 export const STARTER_VILLAGE_POOLS = Object.freeze({
   mainTier: 1,
   mainLevel: 1,
-  storageCapacity: 100,
+  storageCapacity: 250,
   basePopCapacity: 10,
   food: 5,
   water: 5,

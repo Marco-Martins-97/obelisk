@@ -23,6 +23,7 @@ import {
   TERRITORY_TILE_DISTANCE_KM,
   WATER_BOWLS_PER_JAR,
 } from '../config/worldConstants.js';
+import { createPrng, hashSeed } from '../generators/prng.js';
 import { TERRITORY_FOREST_THRESHOLD } from '../generators/territoryGenerator.js';
 
 /**
@@ -611,6 +612,122 @@ export function calculateUnitActionTimestamps({
 }
 
 /**
+ * Computes round-trip timestamps for a multi-unit team (`e.g. 2 Gatherers + 1 Hunter`),
+ * marching together at the slowest active unit's movement speed.
+ *
+ * @param {object} params - Team dispatch parameters.
+ * @param {{ x: number, y: number }} [params.from={ x: 12, y: 12 }] - Main village tile.
+ * @param {{ x: number, y: number }} params.to - Target action tile.
+ * @param {Record<string, number>} [params.units={}] - Unit counts in the team (`{ gatherer, hunter }`).
+ * @param {number} [params.workDurationHours] - Optional work duration override in in-game hours.
+ * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
+ * @param {number} [params.nowMs=0] - Virtual clock timestamp when dispatched.
+ * @returns {{
+ *   distanceKm: number,
+ *   teamSpeedKmPerHour: number,
+ *   oneWayTravelMs: number,
+ *   workMs: number,
+ *   arrivesAtMs: number,
+ *   workCompletedAtMs: number,
+ *   returnsAtMs: number,
+ * }} Synchronized team lifecycle timestamps in virtual milliseconds.
+ * @throws {RangeError} When team contains zero units.
+ */
+export function calculateTeamActionTimestamps({
+  from = { x: 12, y: 12 },
+  to,
+  units = {},
+  workDurationHours,
+  unlockedTechs = STARTER_UNLOCKED_TECHS,
+  nowMs = 0,
+}) {
+  const activeEntries = Object.entries(units ?? {}).filter(
+    ([unitId, count]) => UNITS[unitId] && Number(count) > 0,
+  );
+  if (activeEntries.length === 0) {
+    throw new RangeError('Team action requires at least 1 active unit.');
+  }
+
+  const teamSpeedKmPerHour = Math.min(
+    ...activeEntries.map(([unitId]) => UNITS[unitId].speedKmPerHour),
+  );
+  const baseWorkHours = Math.max(
+    ...activeEntries.map(([unitId]) => UNITS[unitId].workDurationHours),
+  );
+
+  const bestTool = getBestUnlockedTool(unlockedTechs, 'general');
+  const speedMult = bestTool?.modifiers?.workSpeedMultiplier ?? 1.0;
+  const hours = workDurationHours !== undefined ? workDurationHours : baseWorkHours / speedMult;
+
+  const distanceKm = calculateTileDistanceKm(from, to);
+  const oneWayTravelMs = Math.round((distanceKm / teamSpeedKmPerHour) * REAL_MS_PER_INGAME_HOUR);
+  const workMs = Math.round(hours * REAL_MS_PER_INGAME_HOUR);
+  const arrivesAtMs = nowMs + oneWayTravelMs;
+  const workCompletedAtMs = arrivesAtMs + workMs;
+
+  return {
+    distanceKm,
+    teamSpeedKmPerHour,
+    oneWayTravelMs,
+    workMs,
+    arrivesAtMs,
+    workCompletedAtMs,
+    returnsAtMs: workCompletedAtMs + oneWayTravelMs,
+  };
+}
+
+/**
+ * Classifies a running asynchronous task into its current lifecycle phase and countdown.
+ *
+ * @param {{ arrivesAtMs?: number | null, completedAtMs: number, returnsAtMs?: number | null }} task
+ * @param {number} nowMs - Current virtual simulation timestamp.
+ * @returns {{
+ *   phase: 'going' | 'doing' | 'returning' | 'done',
+ *   phaseLabel: 'Traveling' | 'Working' | 'Returning' | 'Done',
+ *   phaseRemainingMs: number,
+ *   totalRemainingMs: number,
+ * }} Current phase metadata and remaining milliseconds.
+ */
+export function getTaskPhase(task, nowMs) {
+  const returnsAtMs = task.returnsAtMs ?? task.completedAtMs;
+  const totalRemainingMs = Math.max(0, returnsAtMs - nowMs);
+
+  if (typeof task.arrivesAtMs === 'number' && nowMs < task.arrivesAtMs) {
+    return {
+      phase: 'going',
+      phaseLabel: 'Traveling',
+      phaseRemainingMs: task.arrivesAtMs - nowMs,
+      totalRemainingMs,
+    };
+  }
+
+  if (nowMs < task.completedAtMs) {
+    return {
+      phase: 'doing',
+      phaseLabel: 'Working',
+      phaseRemainingMs: task.completedAtMs - nowMs,
+      totalRemainingMs,
+    };
+  }
+
+  if (nowMs < returnsAtMs) {
+    return {
+      phase: 'returning',
+      phaseLabel: 'Returning',
+      phaseRemainingMs: returnsAtMs - nowMs,
+      totalRemainingMs,
+    };
+  }
+
+  return {
+    phase: 'done',
+    phaseLabel: 'Done',
+    phaseRemainingMs: 0,
+    totalRemainingMs: 0,
+  };
+}
+
+/**
  * Classifies a Territory tile into Stone Age gather/hunt terrain categories.
  *
  * @param {{ isWater?: boolean, forestDensity?: number }} tile - Territory sub-tile object.
@@ -748,6 +865,120 @@ export function rollTileActionYield({
 }
 
 /**
+ * Resolves combined yields for a dispatched unit team (`{ gatherer, hunter, water }`).
+ * - `'team'`: Smart Role Assignment — Gatherers roll `'gather'`, Hunters roll `'hunt'`, and Water collectors gather `10` bowls each.
+ * - `'collect_water'`: All Gatherers and Hunters collect `1` jar (`10` bowls) each on water tiles.
+ * - `'gather'` / `'hunt'`: Only units matching the chosen specialty execute yield rolls.
+ *
+ * @param {object} params - Team resolution inputs.
+ * @param {Record<string, number>} [params.units={}] - Assigned role counts `{ gatherer, hunter, water }`.
+ * @param {'team' | 'gather' | 'hunt' | 'collect_water'} params.action - Selected team action.
+ * @param {{ isWater?: boolean, forestDensity?: number }} params.tile - Target Territory tile.
+ * @param {string[]} [params.availableOres=[]] - Regional Territory ores.
+ * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
+ * @param {() => number} params.rng - Explicit seeded PRNG function.
+ * @returns {{
+ *   terrain: 'water' | 'forest' | 'fields',
+ *   items: Record<string, number>,
+ *   waterBowls: number,
+ *   rollsExecuted: number,
+ *   emptyRolls: number,
+ * }} Aggregated team yields.
+ */
+export function resolveTeamActionYield({
+  units = {},
+  action,
+  tile,
+  availableOres = [],
+  unlockedTechs = STARTER_UNLOCKED_TECHS,
+  rng,
+}) {
+  const gatherers = Math.max(0, Math.floor(units.gatherer ?? 0));
+  const hunters = Math.max(0, Math.floor(units.hunter ?? 0));
+  const waterCollectors = Math.max(0, Math.floor(units.water ?? 0));
+  const terrain = classifyTerritoryTile(tile);
+
+  if (action === 'collect_water') {
+    const totalCollectors = waterCollectors > 0 ? waterCollectors : gatherers + hunters;
+    if (totalCollectors < 1) {
+      throw new Error('Collect Water requires at least 1 Gatherer or Hunter.');
+    }
+    if (terrain !== 'water') {
+      throw new RangeError('Action "collect_water" can only target a water tile.');
+    }
+    return {
+      terrain,
+      items: {},
+      waterBowls: totalCollectors * WATER_BOWLS_PER_JAR,
+      rollsExecuted: totalCollectors,
+      emptyRolls: 0,
+    };
+  }
+
+  const items = {};
+  let waterBowls = 0;
+  let rollsExecuted = 0;
+  let emptyRolls = 0;
+
+  const runRolls = (unitId, rollAction, count) => {
+    for (let i = 0; i < count; i += 1) {
+      const res = rollTileActionYield({
+        unitId,
+        action: rollAction,
+        tile,
+        availableOres,
+        unlockedTechs,
+        rng,
+      });
+      rollsExecuted += 1;
+      if (res.foundNothing) {
+        emptyRolls += 1;
+      } else {
+        for (const [id, qty] of Object.entries(res.items)) {
+          items[id] = (items[id] ?? 0) + qty;
+        }
+      }
+    }
+  };
+
+  if (action === 'team') {
+    if (gatherers + hunters + waterCollectors < 1) {
+      throw new Error('Team action requires at least 1 assigned unit.');
+    }
+    if (waterCollectors > 0 && terrain !== 'water') {
+      throw new RangeError('Water collection inside a team can only target a water tile.');
+    }
+    if (gatherers > 0) runRolls('gatherer', 'gather', gatherers);
+    if (hunters > 0) runRolls('hunter', 'hunt', hunters);
+    if (waterCollectors > 0) {
+      waterBowls = waterCollectors * WATER_BOWLS_PER_JAR;
+      rollsExecuted += waterCollectors;
+    }
+    return { terrain, items, waterBowls, rollsExecuted, emptyRolls };
+  }
+
+  const actingUnitId = action === 'gather' ? 'gatherer' : action === 'hunt' ? 'hunter' : null;
+  if (!actingUnitId) {
+    throw new Error(`Unsupported team action "${action}".`);
+  }
+
+  const actingCount = actingUnitId === 'gatherer' ? gatherers : hunters;
+  if (actingCount < 1) {
+    throw new Error(`Action "${action}" requires at least 1 ${UNITS[actingUnitId].name}.`);
+  }
+
+  runRolls(actingUnitId, action, actingCount);
+
+  return {
+    terrain,
+    items,
+    waterBowls,
+    rollsExecuted,
+    emptyRolls,
+  };
+}
+
+/**
  * Creates a Territory exploration bitmask initialized to 0 with a centered 7x7 starter region set to 1.
  *
  * @param {number} [size=25] - Territory grid width/height.
@@ -872,5 +1103,88 @@ export function unlockContinentRingIfTerritoryComplete({
     unlocked: true,
     fog: res.fog,
     newlyRevealedCount: res.newlyRevealedCount,
+  };
+}
+
+/**
+ * Selects a deterministic starter village coordinate on the Continent inside the
+ * central North-South band (30%..70% height) across the full West-East range.
+ * Guarantees the chosen tile is buildable and never overlaps The Obelisk.
+ *
+ * @param {{ size: number, tiles: Array<object>, obeliskCoords?: { x: number, y: number } }} continent
+ * @param {string | number} [seed='obelisk-alpha'] - World seed used for deterministic tie-breaking.
+ * @returns {object} Selected starter Continent tile.
+ * @throws {Error} When no buildable non-Obelisk tile exists on the Continent.
+ */
+export function pickStarterSpawnTile(continent, seed = 'obelisk-alpha') {
+  const { size, tiles, obeliskCoords } = continent;
+  const minY = Math.floor(size * 0.3);
+  const maxY = Math.max(minY, Math.ceil(size * 0.7) - 1);
+
+  const isEligible = (tile) =>
+    Boolean(tile?.buildable) &&
+    !tile.isObelisk &&
+    !(obeliskCoords && tile.x === obeliskCoords.x && tile.y === obeliskCoords.y);
+
+  const bandCandidates = tiles.filter(
+    (tile) => isEligible(tile) && tile.y >= minY && tile.y <= maxY,
+  );
+  const pool = bandCandidates.length > 0 ? bandCandidates : tiles.filter(isEligible);
+
+  if (pool.length === 0) {
+    throw new Error('No buildable non-Obelisk Continent tile available for starter spawn.');
+  }
+
+  const rng = createPrng(hashSeed(`${String(seed)}:starter_spawn`));
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+/**
+ * Computes the inclusive explored bounding box and tile count from a fog bitmask.
+ * Used to auto-zoom and center Territory (7x7 -> 25x25) and Continent (1x1 -> 3x3) canvases.
+ *
+ * @param {Uint8Array | ArrayLike<number>} fogGrid - Row-major exploration bitmask (`1` = revealed).
+ * @param {number} size - Square grid dimension.
+ * @returns {{
+ *   minX: number,
+ *   maxX: number,
+ *   minY: number,
+ *   maxY: number,
+ *   width: number,
+ *   height: number,
+ *   exploredCount: number,
+ * }} Bounding box metrics around revealed tiles.
+ */
+export function getExploredBounds(fogGrid, size) {
+  let minX = size;
+  let maxX = -1;
+  let minY = size;
+  let maxY = -1;
+  let exploredCount = 0;
+
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if (fogGrid[y * size + x] === 1) {
+        exploredCount += 1;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (exploredCount === 0) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0, exploredCount: 0 };
+  }
+
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+    exploredCount,
   };
 }

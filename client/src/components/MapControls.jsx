@@ -31,6 +31,8 @@ const BASE_DEV_LAYERS = [
  * @param {(show: boolean) => void} props.onToggleUnbuildable
  * @param {boolean} props.showObelisk
  * @param {(show: boolean) => void} props.onToggleObelisk
+ * @param {boolean} [props.showFog=true]
+ * @param {(show: boolean) => void} [props.onToggleFog]
  * @returns {import('react').JSX.Element}
  */
 export default function MapControls({
@@ -50,6 +52,8 @@ export default function MapControls({
   onToggleUnbuildable,
   showObelisk,
   onToggleObelisk,
+  showFog = true,
+  onToggleFog,
 }) {
   const [draftSeed, setDraftSeed] = useState(seed);
 
@@ -64,11 +68,12 @@ export default function MapControls({
   };
 
   return (
-    <header className="border-b border-slate-800 bg-slate-900/90 px-4 py-3">
+    <section
+      aria-label="Sandbox map controls"
+      className="border-b border-slate-800 bg-slate-900/90 px-4 py-3"
+    >
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold tracking-tight text-amber-400">Obelisk</h1>
-
+        <div className="flex flex-wrap items-center gap-3">
           <div
             className="inline-flex rounded-lg border border-slate-700 bg-slate-950 p-0.5 text-xs"
             role="group"
@@ -99,6 +104,18 @@ export default function MapControls({
               Dev
             </button>
           </div>
+
+          {onToggleFog && (
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={showFog}
+                onChange={(e) => onToggleFog(e.target.checked)}
+                className="accent-amber-400"
+              />
+              Fog of War
+            </label>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2 text-xs">
@@ -223,6 +240,6 @@ export default function MapControls({
           </div>
         </div>
       )}
-    </header>
+    </section>
   );
 }

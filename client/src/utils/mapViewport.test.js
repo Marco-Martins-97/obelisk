@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { clampPanOffsets, getVisibleTileRange, screenToTile, zoomAtPoint } from './mapViewport.js';
+import {
+  clampPanOffsets,
+  getViewportForBounds,
+  getVisibleTileRange,
+  screenToTile,
+  zoomAtPoint,
+} from './mapViewport.js';
 import { formatDevTileValue, getDevTileColor } from './mapColors.js';
 
 describe('Stage 2: Map Viewport Frustum Culling & Dev Colors', () => {
@@ -124,5 +130,30 @@ describe('Stage 2: Map Viewport Frustum Culling & Dev Colors', () => {
     expect(getDevTileColor(tile, 'forest')).toMatch(/^rgb\(/);
     expect(formatDevTileValue(tile, 'elevation')).toBe('0.55');
     expect(formatDevTileValue(tile, 'ore:gold')).toBe('0.88');
+  });
+
+  it('auto-zooms centered 7x7 starter bounds and widens gracefully when explored area grows', () => {
+    const starterView = getViewportForBounds({
+      bounds: { minX: 9, maxX: 15, minY: 9, maxY: 15, width: 7, height: 7, exploredCount: 49 },
+      canvasWidth: 672,
+      canvasHeight: 672,
+      gridSize: 25,
+      minTileSize: 672 / 25,
+      maxTileSize: 72,
+      paddingTiles: 1,
+    });
+    expect(starterView.tileSize).toBe(72);
+
+    const widerView = getViewportForBounds({
+      bounds: { minX: 4, maxX: 20, minY: 4, maxY: 20, width: 17, height: 17, exploredCount: 289 },
+      canvasWidth: 672,
+      canvasHeight: 672,
+      gridSize: 25,
+      minTileSize: 672 / 25,
+      maxTileSize: 72,
+      paddingTiles: 1,
+    });
+    expect(widerView.tileSize).toBeLessThan(starterView.tileSize);
+    expect(widerView.tileSize).toBeGreaterThanOrEqual(672 / 25);
   });
 });

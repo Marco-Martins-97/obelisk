@@ -8,20 +8,20 @@ All resources live in `/shared/config/resources.js` via `createResource()`, and 
 ## 2. Stage 3 — Stone Age Resources, Water Jars & Yields
 
 ### Starting Stockpile (`MAIN` Building)
-- **General Storage (`50/100`):** `10 sticks` (`20` space), `10 pelts` (`20` space), `5 small_stones` (`10` space) — each `small` (`sizeClass: 2`).
+- **General Storage (`50/250`):** `10 sticks` (`20` space), `10 pelts` (`20` space), `5 small_stones` (`10` space) — each `small` (`sizeClass: 2`).
 - **Food:** `5` starting food.
 - **Water (`5/10` bowls):** `5` water bowls stored inside a `10`-bowl **Jar** (`1 jar = 10 water bowls`).
 - **Starter Tech:** `wood_tools` (technology tree node, not stored as a physical inventory item).
 - **Population (`0/10`):** `10` available population capacity, `0` units trained at spawn.
 
-### Gathering (`gatherer` Unit — Timed & Probabilistic)
-Each unit (`gatherer`, `hunter`, `builder`) has a movement speed in `km/h` (`1 territory sub-tile = 500m` / `0.5 km`). Total action duration = **`outbound travel (MAIN → tile) + action work time + return travel (tile → MAIN)`**. Every gather/hunt roll is probabilistic and may occasionally return nothing:
+### Gathering (`gatherer` & `hunter` Teams — Timed, Slowest Speed & Return Reveal)
+Teams (`1+` Gatherers and/or Hunters) march at the **slowest unit's speed** (`km/h`; `1 territory sub-tile = 500m` / `0.5 km`). Total action lifecycle = **`Traveling (MAIN → tile) → Working (action) → Returning (tile → MAIN)`**. Quick dispatch rows (`[Gather - 1 +]`, `[Hunt - 1 +]`) send solo specialty squads in one click, while the **`[Team >]`** submenu uses Smart Role Assignment so Gatherers gather, Hunters hunt, and assigned water haulers collect `10` bowls each on a single trip at the slowest unit's speed. Newly discovered `3×3` terrain is revealed once the team (or Builder) returns to `MAIN`:
 
 | Territory Tile Type | Action | Possible Yields |
 | :--- | :--- | :--- |
 | **Fields (Open Land)** | `Gather` | `small_stones`, `seeds`, `straw` |
 | **Water (Lake / River / Spring)** | `Gather` (Panning) | `clay`, `ore_nuggets` from **any ore except `flux` and `coal`** (`copper`, `iron`, `tin`, `nickel`, `silver`, `gold`, `gems`) |
-| **Water (Lake / River / Spring)** | `Collect Water` | **`1 jar` (`10` water bowls)** at a time into water storage |
+| **Water (Lake / River / Spring)** | `Collect Water` (`Gatherer` + `Hunter`) | **`1 jar` (`10` water bowls)** per unit into water storage |
 | **Forest** | `Gather` | `berries`, `sticks` |
 
 ### Hunting (`hunter` Unit — Timed & Probabilistic)

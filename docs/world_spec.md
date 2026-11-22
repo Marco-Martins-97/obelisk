@@ -41,18 +41,18 @@ Generates an `M×M` regional grid from `(tileSeed, worldTileContext)`:
 
 ---
 
-## 3. Stage 2 & Beyond — Map Viewport Split (`Sandbox` vs. `Online`) & Exploration Zoom
-A fixed top Navbar switches between two separate pages:
-- **Sandbox (`/sandbox`):** Interactive Dev Visualizer & testing sandbox:
-  - **Territory Terrain (Primary Map):** Full `25×25` view by default (`672×672` centered canvas), zoomable/pannable with hover inspection.
-  - **Continent Overview (Sidebar Map):** `320×320` centered canvas (`32px` local tiles, **Fit All** / **Center** controls) showing Stone (`rockType`) without ores.
-  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, lakes/rivers/springs, forest canopies, and the Obelisk.
-  - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and per-ore `Ores` layers) with `10×` local contrast on Territory elevation/temperature, an **Unbuildable (60% Red)** overlay toggle, and `tileSeed` in hex.
-  - **Seed & Size Controls:** Live `masterWorldSeed` input + randomize + configurable Continent/Territory sizes.
-- **Online (`/`):** Gameplay-only view (large Territory, small Continent) with strict information hiding:
+## 3. Stage 2 & 3 — Map Viewport Split (`Online` vs. `Sandbox`) & Exploration Zoom
+A sticky Top Navbar (`react-router`) switches between **Online (`/`)** and **Sandbox (`/sandbox`)** with a local speed selector (`1×`–`3600×`, default `6×`) and a sticky **Village Header Bar** (`Age · Main Tier · Level`, `World (x, y)`, `Storage`, `Food`, `Water`, `Pop`) anchored directly underneath:
+- **Sandbox (`/sandbox`):** Localhost-persisted Dev Visualizer & playable village sandbox:
+  - **Primary Map (`672×672` Territory ↔ Continent Toggle):** Switches the full-size `672×672` interactive canvas between Territory Terrain and Continent Map (`50px` zoomable tiles, `1px` `#000000` selected tile outline, optional **Fog of War** toggle).
+  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, lakes/rivers/springs, forest canopies, placed buildings (`BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
+  - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and per-ore `Ores` layers) with `10×` local contrast on Territory elevation/temperature, an **Unbuildable (60% Red)** overlay toggle, `tileSeed` inspector (`TileInspector`), and live `seed` / grid size controls.
+  - **Right Sidebar & Bottom Footer:** Displays `TileInspector` above four stacked container cards (**Active Timers** with `(x, y) Team (...)` and `Conclusion: HH:MM:SS` + `Traveling / Working / Returning HH:MM:SS` → **Units** → **Stockpile** with Eat & discard controls → **Unlocked Technologies**), plus a full-width **Village Log** footer.
+- **Online (`/`):** Gameplay-only UI with strict Fog of War & information hiding:
+  - **Full-Size Map View (`Territory ↔ Continent` Toggle):** Uses the full `672×672` canvas for both the home `25×25` Territory and `100×100` Continent views (removing any embedded mini-map so **Active Timers → Units → Stockpile → Unlocked Technologies** sit at the top of the right sidebar, with the **Village Log** at the bottom).
   - **No Dev Info / No Tile Metrics:** Hovering/inspecting tiles displays coordinates `(x, y)` only (no elevation/moisture/ore percentages or `tileSeed`).
-  - **Left-Click:** Selects a building—shows `"Building..."` + countdown if under construction, or opens the Building Menu when built.
-  - **Right-Click:** Opens the Action Menu (`Gather`, `Collect Water`, `Hunt`, `Build →` with red = cannot build / grey = missing resources).
+  - **Left-Click:** Selects a building—shows `"Building..."` + countdown if under construction, or opens the Building Menu (`MAIN` trains units + upgrades Level/Tier, `FIREPIT` cooks & researches `stone_tools`, `KILN` smelts `copper_ingot`).
+  - **Right-Click:** Highlights the tile with a `1px` black outline and opens `[Gather 0 - 1 + All]`, `[Hunt 0 - 1 + All]`, `[Collect Water 0 - 1 + All]` (on water), `[Team >]` (Smart Role Assignment mixing Gatherers/Hunters/Water), and `[Build >]` (`ready`, `grey` insufficient resources, `red` blocked/locked).
   - **Progressive Exploration & Auto-Zoom:**
-    - **Territory (`25×25`, `1 tile = 500m` [`0.5 km`]):** Starts with central **`7×7`** revealed and zoomed in. Actions target an already-explored (`1`) tile `x` and upon completion reveal the **`3×3` area** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically to fit explored bounds.
+    - **Territory (`25×25`, `1 tile = 500m` [`0.5 km`]):** Starts with central **`7×7`** revealed and zoomed in. Actions target an already-explored (`1`) tile `x` and **upon the team/builder returning to `MAIN`** reveal the **`3×3` area** around `x` (`[[1,1,1],[1,1,1],[1,1,x]] → [[1,1,1,0],[1,1,1,1],[1,1,x,1],[0,1,1,1]]`), zooming out dynamically to fit explored bounds.
     - **Continent (`100×100`, `1 tile = 12.5 km`):** Starts with **`1` tile** (home village, zoomed in); revealing all `25×25` tiles of the home Territory unlocks a **`1`-tile ring (`3×3`)** around the village; subsequent Continent exploration reveals **`3×3` areas** around explored targets and zooms out dynamically.

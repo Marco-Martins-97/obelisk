@@ -13,6 +13,8 @@
  * @param {string} config.name - Display name.
  * @param {number} config.speedKmPerHour - Travel speed in km/h (1 Territory tile = 0.5 km).
  * @param {number} [config.workDurationHours=1] - On-site work duration in in-game hours.
+ * @param {number} [config.trainingTimeHours=0] - Training duration at Main in in-game hours.
+ * @param {Record<string, number>} [config.trainingCost={}] - Resource costs consumed to train.
  * @param {number} [config.popCost=1] - Population slots occupied by each trained unit.
  * @param {string} [config.age='stone'] - Tech age unlocking this unit.
  * @param {number} [config.tier=1] - Unit tier.
@@ -30,6 +32,7 @@ export function createUnit(config) {
 
   const speedKmPerHour = config.speedKmPerHour ?? 5;
   const workDurationHours = config.workDurationHours ?? 1;
+  const trainingTimeHours = config.trainingTimeHours ?? 0;
   const popCost = config.popCost ?? 1;
 
   if (!Number.isFinite(speedKmPerHour) || speedKmPerHour <= 0) {
@@ -37,6 +40,9 @@ export function createUnit(config) {
   }
   if (!Number.isFinite(workDurationHours) || workDurationHours < 0) {
     throw new RangeError(`Unit "${config.id}" workDurationHours must be >= 0.`);
+  }
+  if (!Number.isFinite(trainingTimeHours) || trainingTimeHours < 0) {
+    throw new RangeError(`Unit "${config.id}" trainingTimeHours must be >= 0.`);
   }
   if (!Number.isInteger(popCost) || popCost < 1) {
     throw new RangeError(`Unit "${config.id}" popCost must be an integer >= 1.`);
@@ -51,6 +57,8 @@ export function createUnit(config) {
     popCost,
     speedKmPerHour,
     workDurationHours,
+    trainingTimeHours,
+    trainingCost: Object.freeze({ ...(config.trainingCost ?? {}) }),
     allowedActions: Object.freeze([...(config.allowedActions ?? [])]),
     allowedBiomes: Object.freeze([...(config.allowedBiomes ?? [])]),
     description: config.description ?? '',
@@ -64,6 +72,7 @@ export const UNITS = Object.freeze({
     name: 'Gatherer',
     speedKmPerHour: 5,
     workDurationHours: 1,
+    trainingTimeHours: 0,
     allowedActions: ['gather', 'collect_water'],
     allowedBiomes: ['fields', 'forest', 'water'],
     description: 'Collects sticks, berries, stones, seeds, straw, clay, ore nuggets, and jars of water.',
@@ -73,15 +82,17 @@ export const UNITS = Object.freeze({
     name: 'Hunter',
     speedKmPerHour: 6,
     workDurationHours: 1,
-    allowedActions: ['hunt'],
+    trainingTimeHours: 0,
+    allowedActions: ['hunt', 'collect_water'],
     allowedBiomes: ['fields', 'forest', 'water'],
-    description: 'Forages grain on fields, hunts meat & pelts in forests, and catches fish in water.',
+    description: 'Forages grain on fields, hunts meat & pelts in forests, catches fish and collects water on water tiles.',
   }),
   builder: createUnit({
     id: 'builder',
     name: 'Builder',
     speedKmPerHour: 4,
     workDurationHours: 0,
+    trainingTimeHours: 0,
     allowedActions: ['build', 'upgrade'],
     allowedBiomes: ['fields', 'forest'],
     description: 'Travels to construction sites and stays locked until returning to Main.',

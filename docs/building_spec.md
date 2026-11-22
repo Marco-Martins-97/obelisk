@@ -28,7 +28,7 @@ MongoDB stores only dynamic building instances per settlement:
 
 | Building | Role & Starting State | Levels | Requirements, Workers & Cost |
 | :--- | :--- | :--- | :--- |
-| **`MAIN`** | Pre-placed village center at `(12, 12)` (`tier: 1`, `level: 1`). Provides starting `storage: 50/100` (`10 sticks`, `10 pelts`, `5 small_stones`), `pop: 0/10`, `food: 5`, and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1..3` | Pre-built; Tier 2 (`Copper Age`) upgrade requires `copper_age` tech + `{ small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 }` (`4.0h`, `1` builder) |
+| **`MAIN`** | Pre-placed village center at `(12, 12)` (`tier: 1`, `level: 1`). Provides starting `storage: 50/250` (`10 sticks`, `10 pelts`, `5 small_stones`), `pop: 0/10`, `food: 5`, and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1..3` | Pre-built; Level upgrade (`+250` storage, `+10` pop/lv): base `{ sticks: 6, small_stones: 5, pelts: 4 } × targetLevel` (`2.5h`, `1` builder); Tier 2 (`Copper Age`) requires `copper_age` tech + `{ small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 }` (`4.0h`, `1` builder) |
 | **`FIREPIT`** | Cooks raw `meat` → `cooked_meat`, `fish` → `cooked_fish`; unlocks & researches **`stone_tools`** technology. | `1..3` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` (`1.5h`) |
 | **`HOUSE`** | Increases maximum settlement population by **`+10` per level**. | `1..3` | `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 6, pelts: 4, straw: 4 }` (`2.0h`) |
 | **`KILN`** | Crafts `charcoal` and smelts `10 copper_nuggets` → `1 copper_ingot` (triggers **`copper_age`**). | `1..3` | Requires `stone_tools` (`requiredTechs: ['stone_tools']`); `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` (`3.0h`) |
@@ -47,9 +47,9 @@ MongoDB stores only dynamic building instances per settlement:
 ## 3. Core Building & Interaction Rules
 1. **Round-Trip Construction Lifecycle & Population Usage:**
    - Creating a building consumes materials, employs `workersRequired` population, and locks `>= 1` `builder` across a round-trip lifecycle (`1 tile = 500m` / `0.5 km` from `MAIN (12, 12)` to target `(x, y)`):
-     - **Outbound Travel (`t_travel`):** Builder walks `MAIN → tile`.
-     - **Construction (`t_build`):** Building finishes at `now + t_travel + t_build`.
-     - **Return Travel (`t_travel`):** Builder walks `tile → MAIN` and becomes available again only at `now + 2 * t_travel + t_build`.
+     - **Traveling (`t_travel`):** Builder walks `MAIN → tile`.
+     - **Working (`t_build`):** Building finishes and becomes active at `now + t_travel + t_build`.
+     - **Returning (`t_travel`):** Builder walks `tile → MAIN`, unlocks availability, and reveals the `3×3` Territory border around `(x, y)` at `now + 2 * t_travel + t_build`.
 2. **Left-Click Building Interaction (Online UI):**
    - **Under Construction:** Displays `"Building..."` and the remaining countdown timer (`buildEndsAt`).
    - **Completed:** Opens the **Building Menu** containing building info, crafting recipes, research options (`FIREPIT`), upgrades, and unit training (for `MAIN`).
