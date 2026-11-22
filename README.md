@@ -2,8 +2,8 @@
 
 > **An asynchronous, browser-based MMORTS** combining *Tribal Wars*-style world exploration and marketplace trading with *TerraFirmaCraft*-inspired geological scarcity, prospecting, and seasonal survival.
 
-**Current Version:** `v0.1.0` *(Stages 0–2 Complete — Deterministic World/Territory Engine & Interactive Canvas Sandbox)*  
-**Tech Stack:** React 19 · Vite 8 · Tailwind CSS v4 · Pure ES6+ ESM Workspaces · Vitest · ESLint *(Backend Stage 5+: Node.js, Express, MongoDB, Socket.io, BullMQ)*
+**Current Version:** `v0.2.0` *(Stages 0–3 Complete — Stone Age Playable Vertical Slice, Tech Tree, Team Dispatch & Online/Sandbox UI)*  
+**Tech Stack:** React 19 · React Router 8 · Vite 8 · Tailwind CSS v4 · Pure ES6+ ESM Workspaces · Vitest · ESLint *(Backend Stage 5+: Node.js, Express, MongoDB, Socket.io, BullMQ)*
 
 ---
 
@@ -35,8 +35,15 @@
 ### 4. High-Performance HTML5 Canvas Viewport (`/client`)
 - **Viewport Frustum Culling (`getVisibleTileRange`):** Renders only on-screen tiles `+ 1` tile margin, keeping draw cost bounded by screen pixels regardless of map size, paired with clamped pan and cursor-anchored zoom.
 - **Dual Map Modes:**
-  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, water, forest canopies, and the Obelisk.
+  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, water, forest canopies, placed buildings (`BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
   - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and dynamic per-ore layers), `10×` local contrast amplification on Territory gradients, an **Unbuildable (60% Red)** overlay toggle, and hex `tileSeed` inspection.
+
+### 5. Stone Age Playable Loop, Tech Tree & Team Dispatch (`/shared` & `/client`)
+- **`Online (/)` vs. `Sandbox (/sandbox)` Routes:** Sticky top `TopNavbar` (`react-router`) with `1×–3600×` speed control, sticky `VillageHeaderBar` (`Age · Main Tier · Level`, `World (x, y)`, `Storage`, `Food`, `Water`, `Pop`), full-size `672×672` **Territory ↔ Continent** map toggling, right-sidebar panels (**Active Timers → Units → Stockpile → Unlocked Technologies**), and bottom **Village Log**.
+- **Strict Online Fog of War:** Territory starts at `7×7` explored and Continent starts at `1` village tile; Online hover tooltips show coordinates `(x, y)` only, while right-click tile commands (`1px` black outline) expand the `3×3` Fog frontier once returning teams/builders arrive back at `MAIN`.
+- **`MAIN` Age Controller & Level Upgrades:** `MAIN` Tier (`1..5`) controls village Age (free downgrade / normal-material upgrade after `copper_age`), while building Levels (`1..3`) expand storage (`+250/lv`) and population capacity (`+10/lv`).
+- **Player-Persistent Technology Tree ([shared/config/technologies.js](./shared/config/technologies.js)):** Tools (`wood_tools` → `stone_tools`) are researched permanently rather than stored in inventory, auto-applying the highest unlocked tier (`+20%` work speed, `+1` max loot, `-50%` empty roll weight).
+- **Multi-Unit Team Dispatch & `HH:MM:SS` Phase Timers:** Right-click menus provide quick `[Gather 0 - 1 + All]`, `[Hunt 0 - 1 + All]`, `[Collect Water 0 - 1 + All]`, and `[Team >]` Smart Role Assignment marching at slowest unit speed across `Traveling → Working → Returning` phases.
 
 ---
 
@@ -44,14 +51,16 @@
 
 ```text
 Obelisk/
-├── client/                  # @obelisk/client — React + Vite + Tailwind CSS v4
+├── client/                  # @obelisk/client — React 19 + React Router 8 + Vite + Tailwind v4
 │   └── src/
-│       ├── components/      # TerritoryCanvas, ContinentCanvas, MapControls, TileInspector
-│       └── utils/           # mapViewport (frustum culling/zoom), mapColors, tileSprites
+│       ├── components/      # TopNavbar, VillageHud, TerritoryCanvas, ContinentCanvas, TileActionMenu, BuildingModal, MapControls, TileInspector
+│       ├── hooks/           # useStoneAgeVillage (localStorage persistence & virtual time loop)
+│       └── utils/           # mapViewport, mapColors, tileSprites, timeFormat
 ├── shared/                  # @obelisk/shared — Isomorphic ES6+ (zero Node/DOM APIs)
-│   ├── config/              # worldConstants.js, worldGeology.js (ROCK_TYPES, ORES, BIOMES)
+│   ├── config/              # worldConstants, worldGeology, resources, units, buildings, recipes, technologies
 │   ├── generators/          # prng.js, noise.js, continentGenerator.js, territoryGenerator.js
-│   └── tests/               # Vitest determinism, invariant, and speed benchmarks
+│   ├── utils/               # stoneAgeMath.js (calendar, timers, yields, fog math, tech & tier rules)
+│   └── tests/               # Vitest determinism, invariant, Stone Age, and benchmark suites
 ├── server/                  # @obelisk/server — Backend workspace (Stage 5+)
 ├── docs/                    # Tracked domain specifications
 │   ├── architecture_spec.md
@@ -72,13 +81,13 @@ Obelisk/
 # 1. Install workspace dependencies from the repository root
 npm install
 
-# 2. Run all unit & UI component tests (24 tests across 6 suites)
+# 2. Run all unit & UI component tests (44 tests across 7 suites)
 npm test
 
 # 3. Run ESLint across shared, client, and server
 npm run lint
 
-# 4. Launch the Stage 2 Map Visualizer locally
+# 4. Launch the client locally (Online + Sandbox views)
 npm run dev:client
 
 # 5. Build production frontend bundle
@@ -94,10 +103,10 @@ npm run build:client
 | **Stage 0** | Monorepo workspaces, Vitest, ESLint (`Math.random` ban), Vite + Tailwind v4 | Complete |
 | **Stage 1** | Deterministic `100×100` Continent & `25×25` Territory generators (`/shared`) | Complete |
 | **Stage 2** | Interactive Gameplay/Dev Canvas Map Visualizer & frustum culling (`/client`) | Complete |
-| **Stage 3** | Data-driven `createBuilding` factory, `7×7`/`5×5` grids, lazy degradation | Planned |
-| **Stage 4** | Data-driven `createResource` factory, `sizeClass` bulk storage, lazy spoilage | Planned |
-| **Stage 5** | Express API, MongoDB sparse deltas, auth, Fog of War enforcement (`/server`) | Planned |
-| **Stage 6** | Socket.io live updates, BullMQ expeditions, prospecting & marketplace caravans | Planned |
+| **Stage 3** | Stone Age playable vertical slice, Tech Tree, Team dispatch, Fog UI & Online/Sandbox split | Complete (`v0.2.0`) |
+| **Stage 4** | Copper & Bronze Ages: surface mines, tool splits, alloying, marketplace caravans | Planned |
+| **Stage 5** | Express API, MongoDB sparse deltas, auth, authoritative Fog of War enforcement (`/server`) | Planned |
+| **Stage 6** | Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk | Planned |
 
 See [GAME_OVERVIEW.md](./GAME_OVERVIEW.md) and [`docs/`](./docs/) for full specifications.
 
