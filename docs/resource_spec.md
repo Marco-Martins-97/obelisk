@@ -11,7 +11,7 @@ All resources live in `/shared/config/resources.js` via `createResource()`, and 
 - **General Storage (`50/100`):** `10 sticks` (`20` space), `10 pelts` (`20` space), `5 small_stones` (`10` space) — each `small` (`sizeClass: 2`).
 - **Food:** `5` starting food.
 - **Water (`5/10` bowls):** `5` water bowls stored inside a `10`-bowl **Jar** (`1 jar = 10 water bowls`).
-- **Starter Tool:** `wood_tool`.
+- **Starter Tech:** `wood_tools` (technology tree node, not stored as a physical inventory item).
 - **Population (`0/10`):** `10` available population capacity, `0` units trained at spawn.
 
 ### Gathering (`gatherer` Unit — Timed & Probabilistic)
@@ -33,11 +33,19 @@ Round-trip timed action (`outbound + hunt + return`) with probabilistic yields:
 | **Forest** | `meat`, `pelt` |
 | **Water (Lake / River / Spring)** | `fish` |
 
-### Stone Age Crafted Items, Tools & Age Evolution
-- **Starter Tool Upgrade:** `wood_tool` → `stone_tool` at the **`FIREPIT`**.
+### Stone Age Crafted Items & Age Evolution Trigger
 - **Cooked Food:** Raw `meat` → `cooked_meat` and raw `fish` → `cooked_fish` cooked at the **`FIREPIT`**.
 - **Fuel:** `sticks` and `charcoal` (crafted at the **`KILN`**).
-- **Copper Age Evolution Requirement:** Smelt **`10 copper_nuggets` → `1 copper_ingot`** in the **`KILN`**.
+- **Copper Age Evolution Trigger:** Smelt **`10 copper_nuggets` + `2 charcoal` → `1 copper_ingot`** in the **`KILN`** (`unlocksTech: 'copper_age'`), unlocking the Tier 2 upgrade on `MAIN` using normal materials.
+
+### 2.4 Technology Tree (`/shared/config/technologies.js`)
+Tools are **permanent, player-persistent technologies** rather than physical storage items. All workers automatically apply the highest unlocked tool tier (`getBestUnlockedTool`), and newly claimed villages retain previously unlocked technologies:
+
+| Tech Node | Tier / Type | Trigger to Unlock Branch | Research Cost & Time | Modifiers & Unlocks |
+| :--- | :--- | :--- | :--- | :--- |
+| **`wood_tools`** | T1 General | Unlocked at spawn (`starter`) | Free (starter tech) | `1.0×` work speed, `0` loot bonus |
+| **`stone_tools`** | T2 General | Build **`1 FIREPIT`** | At `FIREPIT`: `{ small_stones: 3, sticks: 2 }`, `1.0h` | **`+20%`** gather/hunt work speed (`1.2×`), **`+1`** max loot, **`-50%`** empty roll weight (`0.5×`), unlocks **`KILN`** |
+| **`copper_age`** | T2 Age | Craft **`1 copper_ingot`** at `KILN` | Unlocks `MAIN` Tier 2 upgrade | Permits upgrading `MAIN` to Copper Age (`Tier 2`); prepares Copper specialization tool split (`axe`, `pickaxe`, `hoe`, `hammer`, `spear`) |
 
 ---
 
@@ -48,7 +56,7 @@ Round-trip timed action (`outbound + hunt + return`) with probabilistic yields:
 - **Linear `sizeClass` (1–5) Bulkiness:** Linearly scales warehouse capacity and caravan/expedition carry limits (`1` = 1 unit, `2` = 2 units, ..., `5` = 5 units):
   - `1` (**Tiny**): Seeds, gems, coins, ancient relics.
   - `2` (**Small**): Sticks, straw, pelts, small stones, ingots, ore nuggets, berries, rations.
-  - `3` (**Medium**): Logs, raw ores, clay, basic tools.
+  - `3` (**Medium**): Logs, raw ores, clay.
   - `4` (**Big**): Cut stone blocks, timber beams, barrels.
   - `5` (**Large**): Heavy machinery parts, monolith blocks.
 - **Future Ages (Copper → Bronze → Iron → Steel):** Add `geologyTags` underground mining, `Tribal Wars`-style marketplace caravans, and Obelisk expedition supplies.

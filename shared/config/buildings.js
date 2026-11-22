@@ -11,9 +11,9 @@
  * @param {object} config - Building configuration fields.
  * @param {string} config.id - Unique snake_case building identifier.
  * @param {string} config.name - Human-readable building name.
- * @param {number} [config.tier=1] - Technology tier (Stone Age builds Tier 1 only).
- * @param {number} [config.maxLevel=3] - Maximum upgrade level.
- * @param {string} [config.age='stone'] - Tech age unlocking construction.
+ * @param {number} [config.tier=1] - Base technology tier (`MAIN` tier sets village Age).
+ * @param {number} [config.maxLevel=3] - Maximum upgrade level within its tier.
+ * @param {string} [config.age='stone'] - Tech age introducing this building.
  * @param {boolean} [config.prePlaced=false] - Whether placed automatically at spawn.
  * @param {boolean} [config.buildable=true] - Whether constructible from the tile Build menu.
  * @param {number | null} [config.maxCount=null] - Per-territory limit (null = unlimited).
@@ -21,6 +21,9 @@
  * @param {number} [config.buildersRequired=1] - Builders locked during round-trip construction.
  * @param {number} [config.buildTimeHours=1] - On-site construction time in in-game hours.
  * @param {Record<string, number>} [config.cost={}] - Resource costs consumed when starting build.
+ * @param {string[]} [config.requiredTechs=[]] - Technology IDs required to build/upgrade.
+ * @param {string[]} [config.researchesTechs=[]] - Technology IDs researchable inside this building.
+ * @param {Record<number, object>} [config.tierUpgrades={}] - Per-tier upgrade rules (used by Main).
  * @param {number} [config.storageBonusPerLevel=0] - Bulk storage capacity added per level.
  * @param {number} [config.popBonusPerLevel=0] - Max population slots added per level.
  * @param {number} [config.waterCapacity=0] - Dedicated water storage capacity in bowls.
@@ -53,6 +56,17 @@ export function createBuilding(config) {
     throw new RangeError(`Building "${config.id}" buildTimeHours must be >= 0.`);
   }
 
+  const normalizedTierUpgrades = Object.fromEntries(
+    Object.entries(config.tierUpgrades ?? {}).map(([targetTier, upgrade]) => [
+      targetTier,
+      Object.freeze({
+        ...upgrade,
+        requiredTechs: Object.freeze([...(upgrade.requiredTechs ?? [])]),
+        cost: Object.freeze({ ...(upgrade.cost ?? {}) }),
+      }),
+    ]),
+  );
+
   return Object.freeze({
     id: config.id,
     name: config.name,
@@ -66,6 +80,9 @@ export function createBuilding(config) {
     buildersRequired,
     buildTimeHours,
     cost: Object.freeze({ ...(config.cost ?? {}) }),
+    requiredTechs: Object.freeze([...(config.requiredTechs ?? [])]),
+    researchesTechs: Object.freeze([...(config.researchesTechs ?? [])]),
+    tierUpgrades: Object.freeze(normalizedTierUpgrades),
     storageBonusPerLevel: config.storageBonusPerLevel ?? 0,
     popBonusPerLevel: config.popBonusPerLevel ?? 0,
     waterCapacity: config.waterCapacity ?? 0,
@@ -88,11 +105,20 @@ export const BUILDINGS = Object.freeze({
     buildersRequired: 0,
     buildTimeHours: 0,
     cost: {},
+    tierUpgrades: {
+      2: {
+        targetAge: 'copper',
+        requiredTechs: ['copper_age'],
+        buildersRequired: 1,
+        buildTimeHours: 4.0,
+        cost: { small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 },
+      },
+    },
     storageBonusPerLevel: 100,
     popBonusPerLevel: 10,
     waterCapacity: 10,
     trainsUnits: ['gatherer', 'hunter', 'builder'],
-    description: 'Central village hub holding starter supplies, water jar, and unit training.',
+    description: 'Central village Age controller holding starter supplies, water jar, and unit training.',
   }),
   firepit: createBuilding({
     id: 'firepit',
@@ -101,8 +127,9 @@ export const BUILDINGS = Object.freeze({
     buildersRequired: 1,
     buildTimeHours: 1.5,
     cost: { sticks: 4, small_stones: 3 },
-    craftsRecipes: ['cook_meat', 'cook_fish', 'upgrade_stone_tool'],
-    description: 'Cooks meat and fish and upgrades wooden tools into stone tools.',
+    researchesTechs: ['stone_tools'],
+    craftsRecipes: ['cook_meat', 'cook_fish'],
+    description: 'Cooks meat and fish and researches Stone Tools technology.',
   }),
   house: createBuilding({
     id: 'house',
@@ -120,6 +147,7 @@ export const BUILDINGS = Object.freeze({
     workersRequired: 1,
     buildersRequired: 1,
     buildTimeHours: 3.0,
+    requiredTechs: ['stone_tools'],
     cost: { small_stones: 5, clay: 8, straw: 4, sticks: 4 },
     craftsRecipes: ['craft_charcoal', 'smelt_copper_ingot'],
     description: 'Produces charcoal and smelts copper nuggets to unlock the Copper Age.',

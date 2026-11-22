@@ -12,7 +12,9 @@ import {
   RESOURCES,
   SIZE_CLASSES,
   STARTER_INVENTORY,
+  STARTER_UNLOCKED_TECHS,
   STARTER_VILLAGE_POOLS,
+  TECHNOLOGIES,
   TERRITORY_TILE_DISTANCE_KM,
   UNITS,
   WATER_BOWLS_PER_JAR,
@@ -23,21 +25,26 @@ import {
   calculateStorageUsed,
   calculateTileDistanceKm,
   calculateUnitActionTimestamps,
+  canBuildOrUpgradeBuilding,
   classifyTerritoryTile,
   createBuilding,
   createInitialTerritoryFog,
   createPrng,
   createRecipe,
   createResource,
+  createTechnology,
   createUnit,
+  getBestUnlockedTool,
   getCalendarState,
+  getMainTierChangeRule,
+  isTechTriggerSatisfied,
   revealBox3x3,
   rollTileActionYield,
   unlockContinentRingIfTerritoryComplete,
 } from '../index.js';
 
 describe('Stone Age templates, starter pools & linear sizeClass', () => {
-  it('enforces linear sizeClass 1..5 and computes exact 50/100 starter storage bulk', () => {
+  it('enforces linear sizeClass 1..5 and stores tools in Technologies rather than inventory', () => {
     expect(SIZE_CLASSES).toEqual({
       1: 'tiny',
       2: 'small',
@@ -45,6 +52,13 @@ describe('Stone Age templates, starter pools & linear sizeClass', () => {
       4: 'big',
       5: 'large',
     });
+
+    expect(RESOURCES.wood_tool).toBeUndefined();
+    expect(RESOURCES.stone_tool).toBeUndefined();
+    expect(RECIPES.upgrade_stone_tool).toBeUndefined();
+    expect(STARTER_UNLOCKED_TECHS).toEqual(['wood_tools']);
+    expect(STARTER_VILLAGE_POOLS.mainTier).toBe(1);
+    expect(STARTER_VILLAGE_POOLS.mainLevel).toBe(1);
 
     expect(RESOURCES.straw.sizeClass).toBe(2);
     expect(RESOURCES.cooked_fish.edible).toBe(true);
@@ -70,15 +84,160 @@ describe('Stone Age templates, starter pools & linear sizeClass', () => {
     expect(BUILDINGS.main.prePlaced).toBe(true);
     expect(RECIPES.smelt_copper_ingot.inputs).toEqual({ copper_nugget: 10, charcoal: 2 });
     expect(RECIPES.smelt_copper_ingot.unlocksAge).toBe('copper');
+    expect(RECIPES.smelt_copper_ingot.unlocksTech).toBe('copper_age');
   });
 
   it('validates factory inputs and rejects out-of-range configurations', () => {
     expect(() => createResource({ id: 'bad', name: 'Bad', sizeClass: 6 })).toThrow(RangeError);
     expect(() => createUnit({ id: 'bad', name: 'Bad', speedKmPerHour: 0 })).toThrow(RangeError);
     expect(() => createBuilding({ id: 'bad', name: 'Bad', maxLevel: 0 })).toThrow(RangeError);
+    expect(() => createTechnology({ id: 'bad', name: 'Bad', age: 'space' })).toThrow(Error);
     expect(() =>
       createRecipe({ id: 'bad', name: 'Bad', buildingId: 'kiln', inputs: {}, outputs: { a: 1 }, craftTimeHours: 1 }),
     ).toThrow(Error);
+  });
+});
+
+describe('Technology tree triggers, tool modifiers & Main Tier/Level Age controller', () => {
+  it('auto-selects the highest unlocked tool and checks branch unlock triggers', () => {
+    expect(getBestUnlockedTool(STARTER_UNLOCKED_TECHS).id).toBe('wood_tools');
+    expect(getBestUnlockedTool(['wood_tools', 'stone_tools']).id).toBe('stone_tools');
+    expect(getBestUnlockedTool([])).toBeNull();
+
+    expect(isTechTriggerSatisfied('wood_tools')).toBe(true);
+    expect(isTechTriggerSatisfied('stone_tools', { builtBuildings: [] })).toBe(false);
+    expect(
+      isTechTriggerSatisfied('stone_tools', {
+        builtBuildings: [{ buildingId: 'firepit', status: 'constructing' }],
+      }),
+    ).toBe(false);
+    expect(
+      isTechTriggerSatisfied('stone_tools', {
+        builtBuildings: [{ buildingId: 'firepit', status: 'active' }],
+      }),
+    ).toBe(true);
+    expect(isTechTriggerSatisfied('copper_age', { craftedCounts: { copper_ingot: 0 } })).toBe(false);
+    expect(isTechTriggerSatisfied('copper_age', { craftedCounts: { copper_ingot: 1 } })).toBe(true);
+  });
+
+  it('applies stone_tools modifiers: +20% work speed, +1 max loot, and halves empty weight', () => {
+    const woodTiming = calculateUnitActionTimestamps({
+      from: { x: 12, y: 12 },
+      to: { x: 12, y: 14 },
+      unitId: 'gatherer',
+      unlockedTechs: ['wood_tools'],
+      nowMs: 0,
+    });
+    const stoneTiming = calculateUnitActionTimestamps({
+      from: { x: 12, y: 12 },
+      to: { x: 12, y: 14 },
+      unitId: 'gatherer',
+      unlockedTechs: ['wood_tools', 'stone_tools'],
+      nowMs: 0,
+    });
+    expect(woodTiming.workMs).toBe(600_000);
+    expect(stoneTiming.workMs).toBe(500_000);
+    expect(stoneTiming.oneWayTravelMs).toBe(woodTiming.oneWayTravelMs);
+
+    const fieldsTile = { isWater: false, forestDensity: 0.1 };
+    const stoneRng = createPrng(999);
+    const woodRng = createPrng(999);
+    let stoneEmpty = 0;
+    let woodEmpty = 0;
+    let stoneMaxQty = 0;
+
+    for (let i = 0; i < 200; i += 1) {
+      const s = rollTileActionYield({
+        unitId: 'gatherer',
+        action: 'gather',
+        tile: fieldsTile,
+        unlockedTechs: ['wood_tools', 'stone_tools'],
+        rng: stoneRng,
+      });
+      const w = rollTileActionYield({
+        unitId: 'gatherer',
+        action: 'gather',
+        tile: fieldsTile,
+        unlockedTechs: ['wood_tools'],
+        rng: woodRng,
+      });
+      if (s.foundNothing) stoneEmpty += 1;
+      if (w.foundNothing) woodEmpty += 1;
+      for (const qty of Object.values(s.items)) {
+        if (qty > stoneMaxQty) stoneMaxQty = qty;
+      }
+    }
+
+    expect(stoneEmpty).toBeLessThan(woodEmpty);
+    expect(stoneMaxQty).toBe(3); // base max 2 + stone_tools yieldBonus 1
+  });
+
+  it('gates KILN on stone_tools and enforces Main Tier downgrade/upgrade rules', () => {
+    const kilnBlocked = canBuildOrUpgradeBuilding({
+      buildingId: 'kiln',
+      currentLevel: 0,
+      mainTier: 1,
+      unlockedTechs: ['wood_tools'],
+    });
+    expect(kilnBlocked.allowed).toBe(false);
+
+    const kilnReady = canBuildOrUpgradeBuilding({
+      buildingId: 'kiln',
+      currentLevel: 0,
+      mainTier: 2,
+      unlockedTechs: ['wood_tools', 'stone_tools'],
+    });
+    expect(kilnReady).toEqual({ allowed: true, reason: null, spawnTier: 2 });
+
+    // Existing Tier 2 house cannot upgrade while Main is downgraded to Tier 1.
+    const downgradedHouseUpgrade = canBuildOrUpgradeBuilding({
+      buildingId: 'house',
+      currentLevel: 1,
+      targetLevel: 2,
+      buildingTier: 2,
+      mainTier: 1,
+      unlockedTechs: ['wood_tools', 'stone_tools'],
+    });
+    expect(downgradedHouseUpgrade.allowed).toBe(false);
+
+    // Main upgrade from 1 -> 2 requires copper_age and always uses normal materials.
+    const deniedUpgrade = getMainTierChangeRule({
+      currentMainTier: 1,
+      targetMainTier: 2,
+      unlockedTechs: ['wood_tools', 'stone_tools'],
+    });
+    expect(deniedUpgrade.allowed).toBe(false);
+
+    const allowedUpgrade = getMainTierChangeRule({
+      currentMainTier: 1,
+      targetMainTier: 2,
+      unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age'],
+    });
+    expect(allowedUpgrade).toMatchObject({
+      allowed: true,
+      direction: 'upgrade',
+      isFree: false,
+      cost: BUILDINGS.main.tierUpgrades[2].cost,
+      buildTimeHours: 4.0,
+      targetAge: 'copper',
+    });
+    expect(allowedUpgrade.cost.copper_ingot).toBeUndefined();
+
+    // Downgrade is always free at 0 cost.
+    const freeDowngrade = getMainTierChangeRule({
+      currentMainTier: 2,
+      targetMainTier: 1,
+      unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age'],
+    });
+    expect(freeDowngrade).toMatchObject({
+      allowed: true,
+      direction: 'downgrade',
+      isFree: true,
+      cost: {},
+      buildTimeHours: 0,
+      targetAge: 'stone',
+    });
+    expect(TECHNOLOGIES.copper_age.unlocksMainTier).toBe(2);
   });
 });
 

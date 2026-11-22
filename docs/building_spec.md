@@ -24,14 +24,23 @@ MongoDB stores only dynamic building instances per settlement:
 
 ---
 
-## 2. Stage 3 — Stone Age Buildings (Tier 1 Only, Level Upgradable)
+## 2. Stage 3 — Stone Age Buildings (Tier 1 Base, `MAIN` Tier Controls Age)
 
-| Building | Role & Starting State | Levels | Workers / Builders & Lv 1 Cost |
+| Building | Role & Starting State | Levels | Requirements, Workers & Cost |
 | :--- | :--- | :--- | :--- |
-| **`MAIN`** | Pre-placed village center at `(12, 12)`. Provides starting `storage: 50/100` (`10 sticks`, `10 pelts`, `5 small_stones`), `pop: 0/10`, `food: 5`, and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1+` | Pre-built at village founding |
-| **`FIREPIT`** | Cooks raw `meat` → `cooked_meat`, `fish` → `cooked_fish`, and upgrades starter tools (`wood_tool` → `stone_tool`). | `1+` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` |
-| **`HOUSE`** | Increases maximum settlement population by **`+10` per level**. | `1..3` | `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 6, pelts: 4, straw: 4 }` |
-| **`KILN`** | Crafts `charcoal` and smelts `10 copper_nuggets` into `1 copper_ingot` to unlock **Copper Age** evolution. | `1+` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` |
+| **`MAIN`** | Pre-placed village center at `(12, 12)` (`tier: 1`, `level: 1`). Provides starting `storage: 50/100` (`10 sticks`, `10 pelts`, `5 small_stones`), `pop: 0/10`, `food: 5`, and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1..3` | Pre-built; Tier 2 (`Copper Age`) upgrade requires `copper_age` tech + `{ small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 }` (`4.0h`, `1` builder) |
+| **`FIREPIT`** | Cooks raw `meat` → `cooked_meat`, `fish` → `cooked_fish`; unlocks & researches **`stone_tools`** technology. | `1..3` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` (`1.5h`) |
+| **`HOUSE`** | Increases maximum settlement population by **`+10` per level**. | `1..3` | `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 6, pelts: 4, straw: 4 }` (`2.0h`) |
+| **`KILN`** | Crafts `charcoal` and smelts `10 copper_nuggets` → `1 copper_ingot` (triggers **`copper_age`**). | `1..3` | Requires `stone_tools` (`requiredTechs: ['stone_tools']`); `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` (`3.0h`) |
+
+### 2.1 `MAIN` Tier vs. Building Level & Age Downgrade Rules
+- **Age Controller (`MAIN.tier`):** Each village tracks its own `MAIN` Tier (`1` Stone → `2` Copper → `3` Bronze → `4` Iron → `5` Steel), while `MAIN.level` (`1..3`) scales local storage and housing capacity.
+- **Building Inheritance on Newly Claimed Villages:** Player technologies persist globally across claimed territories, while each new village starts its local `MAIN` Tier from Tier 1 and upgrades buildings independently.
+- **Free Tier Downgrade:** Players may freely downgrade `MAIN.tier` (`0` cost) to return that village to an earlier Age:
+  - Existing buildings keep their higher Tier and stats.
+  - Newly placed buildings are constructed at the **current `MAIN.tier`**.
+  - Higher-tier upgrades/progression remain locked while `MAIN.tier` is downgraded.
+- **Upgrading `MAIN` Tier:** Always consumes normal materials and builder round-trip time (even after a prior downgrade), gated by the corresponding Age tech unlock (e.g., `copper_age` for Tier 2).
 
 ---
 
@@ -43,11 +52,11 @@ MongoDB stores only dynamic building instances per settlement:
      - **Return Travel (`t_travel`):** Builder walks `tile → MAIN` and becomes available again only at `now + 2 * t_travel + t_build`.
 2. **Left-Click Building Interaction (Online UI):**
    - **Under Construction:** Displays `"Building..."` and the remaining countdown timer (`buildEndsAt`).
-   - **Completed:** Opens the **Building Menu** containing building info, crafting recipes, upgrades, and unit training (for `MAIN`).
+   - **Completed:** Opens the **Building Menu** containing building info, crafting recipes, research options (`FIREPIT`), upgrades, and unit training (for `MAIN`).
 3. **Right-Click Build Submenu Colors (Online UI):**
-   - **Normal:** Valid tile, free builder, and sufficient resources—buildable now.
-   - **Grey:** Valid placement and unlocked, but **insufficient resources**.
-   - **Red:** **Cannot build** (unbuildable/shrouded/occupied tile, no free builder, or locked).
+   - **Normal:** Valid tile, free builder, tech/tier unlocked, and sufficient resources—buildable now.
+   - **Grey:** Valid placement and tech unlocked, but **insufficient resources**.
+   - **Red:** **Cannot build** (unbuildable/shrouded/occupied tile, no free builder, or missing `requiredTechs` / Age tier).
 4. **Settlement Limits (Capital vs. Villages):**
    - **Capital (`7×7`):** A player may upgrade only **1** settlement to a Capital.
    - **Cities / Villages (`5×5`):** Players may own multiple villages.

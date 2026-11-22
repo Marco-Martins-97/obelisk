@@ -7,6 +7,7 @@
 
 import { BUILDINGS } from '../config/buildings.js';
 import { PANNABLE_ORE_IDS, RESOURCES } from '../config/resources.js';
+import { AGES, STARTER_UNLOCKED_TECHS, TECHNOLOGIES } from '../config/technologies.js';
 import { UNITS } from '../config/units.js';
 import {
   DAYS_PER_MONTH,
@@ -305,13 +306,264 @@ export function calculateBuildTimestamps({
 }
 
 /**
- * Computes round-trip timestamps for unit field actions (gather, collect_water, hunt).
+ * Selects the highest-tier unlocked tool technology matching `toolType`.
+ * Workers always benefit automatically without equipping tool items.
+ *
+ * @param {string[] | Set<string>} [unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked tech IDs.
+ * @param {string} [toolType='general'] - Tool specialization ('general' in Stone Age).
+ * @returns {Readonly<object> | null} Highest-tier unlocked tool tech node, or null if none.
+ */
+export function getBestUnlockedTool(unlockedTechs = STARTER_UNLOCKED_TECHS, toolType = 'general') {
+  let best = null;
+
+  for (const techId of unlockedTechs ?? []) {
+    const tech = TECHNOLOGIES[techId];
+    if (!tech || tech.category !== 'tool' || tech.toolType !== toolType) continue;
+    if (!best || tech.tier > best.tier) {
+      best = tech;
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Checks whether a technology branch's gameplay trigger condition has been satisfied.
+ *
+ * @param {string} techId - Technology node identifier.
+ * @param {object} [progress={}] - Observed player/village progression metrics.
+ * @param {Array<{ buildingId: string, status?: string }>} [progress.builtBuildings=[]] - Active/placed buildings.
+ * @param {Record<string, number>} [progress.craftedCounts={}] - Lifetime or trigger craft counts by itemId.
+ * @returns {boolean} True when the technology's branch trigger condition is met.
+ * @throws {Error} When `techId` does not exist in `TECHNOLOGIES`.
+ */
+export function isTechTriggerSatisfied(
+  techId,
+  { builtBuildings = [], craftedCounts = {} } = {},
+) {
+  const tech = TECHNOLOGIES[techId];
+  if (!tech) {
+    throw new Error(`Unknown techId "${techId}".`);
+  }
+
+  const trigger = tech.unlockTrigger;
+  if (trigger.type === 'starter') return true;
+
+  if (trigger.type === 'build') {
+    const activeMatches = builtBuildings.filter(
+      (b) => b.buildingId === trigger.buildingId && (!b.status || b.status === 'active'),
+    ).length;
+    return activeMatches >= (trigger.count ?? 1);
+  }
+
+  if (trigger.type === 'craft') {
+    return (craftedCounts[trigger.itemId] ?? 0) >= (trigger.count ?? 1);
+  }
+
+  return false;
+}
+
+/**
+ * Validates whether a building can be constructed or upgraded given Main Tier & unlocked techs.
+ * Existing higher-tier buildings remain intact when Main is downgraded, but cannot upgrade
+ * further until Main advances back to >= their tier. Newly constructed buildings adopt `mainTier`.
+ *
+ * @param {object} params - Validation inputs.
+ * @param {string} params.buildingId - Target building template ID.
+ * @param {number} [params.currentLevel=0] - 0 for new construction, >=1 for existing building.
+ * @param {number} [params.targetLevel=1] - Desired post-build/upgrade level.
+ * @param {number} [params.buildingTier] - Existing instance tier (defaults to template base tier).
+ * @param {number} [params.mainTier=1] - Current Age Tier of the village's Main building.
+ * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked tech IDs.
+ * @returns {{ allowed: boolean, reason: string | null, spawnTier: number }} Permission and resulting tier.
+ */
+export function canBuildOrUpgradeBuilding({
+  buildingId,
+  currentLevel = 0,
+  targetLevel = 1,
+  buildingTier,
+  mainTier = 1,
+  unlockedTechs = STARTER_UNLOCKED_TECHS,
+}) {
+  const def = BUILDINGS[buildingId];
+  if (!def) {
+    throw new Error(`Unknown buildingId "${buildingId}".`);
+  }
+
+  const unlockedSet = new Set(unlockedTechs ?? []);
+  const effectiveTier = currentLevel === 0 ? mainTier : (buildingTier ?? def.tier);
+
+  if (currentLevel === 0) {
+    if (!def.buildable) {
+      return { allowed: false, reason: 'Building is not constructible.', spawnTier: effectiveTier };
+    }
+    if (mainTier < def.tier) {
+      return { allowed: false, reason: `Requires Main Tier ${def.tier}.`, spawnTier: effectiveTier };
+    }
+  } else if (mainTier < effectiveTier || mainTier < def.tier) {
+    return {
+      allowed: false,
+      reason: 'Cannot upgrade while Main is downgraded below building tier.',
+      spawnTier: effectiveTier,
+    };
+  }
+
+  const missingTech = def.requiredTechs.find((techId) => !unlockedSet.has(techId));
+  if (missingTech) {
+    return {
+      allowed: false,
+      reason: `Requires technology: ${missingTech}.`,
+      spawnTier: effectiveTier,
+    };
+  }
+
+  if (currentLevel === 0) {
+    if (targetLevel < 1 || targetLevel > def.maxLevel) {
+      return {
+        allowed: false,
+        reason: `Invalid level ${targetLevel} (max ${def.maxLevel}).`,
+        spawnTier: effectiveTier,
+      };
+    }
+  } else if (targetLevel <= currentLevel || targetLevel > def.maxLevel) {
+    return {
+      allowed: false,
+      reason: `Invalid upgrade target level ${targetLevel} from ${currentLevel} (max ${def.maxLevel}).`,
+      spawnTier: effectiveTier,
+    };
+  }
+
+  return { allowed: true, reason: null, spawnTier: effectiveTier };
+}
+
+/**
+ * Evaluates a village Main Age Tier transition (`downgrade` is free; `upgrade` always costs
+ * normal materials and builder time once unlocked by Age trigger tech).
+ *
+ * @param {object} params - Main tier transition inputs.
+ * @param {number} params.currentMainTier - Current village Main Tier (1..5).
+ * @param {number} params.targetMainTier - Desired village Main Tier (1..5).
+ * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked tech IDs.
+ * @returns {{
+ *   allowed: boolean,
+ *   direction: 'upgrade' | 'downgrade' | 'none',
+ *   isFree: boolean,
+ *   cost: Record<string, number>,
+ *   buildTimeHours: number,
+ *   buildersRequired: number,
+ *   targetAge: string | null,
+ *   reason: string | null,
+ * }} Transition rules and costs.
+ * @throws {RangeError} When either tier is outside 1..5.
+ */
+export function getMainTierChangeRule({
+  currentMainTier,
+  targetMainTier,
+  unlockedTechs = STARTER_UNLOCKED_TECHS,
+}) {
+  if (
+    !Number.isInteger(currentMainTier) ||
+    currentMainTier < 1 ||
+    currentMainTier > AGES.length ||
+    !Number.isInteger(targetMainTier) ||
+    targetMainTier < 1 ||
+    targetMainTier > AGES.length
+  ) {
+    throw new RangeError(
+      `Main tiers must be integers 1..${AGES.length}, got ${currentMainTier} -> ${targetMainTier}.`,
+    );
+  }
+
+  if (targetMainTier === currentMainTier) {
+    return {
+      allowed: false,
+      direction: 'none',
+      isFree: false,
+      cost: {},
+      buildTimeHours: 0,
+      buildersRequired: 0,
+      targetAge: AGES[targetMainTier - 1],
+      reason: 'Main is already at target tier.',
+    };
+  }
+
+  if (targetMainTier < currentMainTier) {
+    return {
+      allowed: true,
+      direction: 'downgrade',
+      isFree: true,
+      cost: {},
+      buildTimeHours: 0,
+      buildersRequired: 0,
+      targetAge: AGES[targetMainTier - 1],
+      reason: null,
+    };
+  }
+
+  if (targetMainTier !== currentMainTier + 1) {
+    return {
+      allowed: false,
+      direction: 'upgrade',
+      isFree: false,
+      cost: {},
+      buildTimeHours: 0,
+      buildersRequired: 0,
+      targetAge: AGES[targetMainTier - 1],
+      reason: 'Main must upgrade one tier at a time.',
+    };
+  }
+
+  const upgradeDef = BUILDINGS.main.tierUpgrades?.[targetMainTier];
+  if (!upgradeDef) {
+    return {
+      allowed: false,
+      direction: 'upgrade',
+      isFree: false,
+      cost: {},
+      buildTimeHours: 0,
+      buildersRequired: 0,
+      targetAge: AGES[targetMainTier - 1],
+      reason: `Tier ${targetMainTier} upgrade is not yet unlocked in this stage.`,
+    };
+  }
+
+  const unlockedSet = new Set(unlockedTechs ?? []);
+  const missingTech = upgradeDef.requiredTechs.find((techId) => !unlockedSet.has(techId));
+  if (missingTech) {
+    return {
+      allowed: false,
+      direction: 'upgrade',
+      isFree: false,
+      cost: upgradeDef.cost,
+      buildTimeHours: upgradeDef.buildTimeHours,
+      buildersRequired: upgradeDef.buildersRequired,
+      targetAge: upgradeDef.targetAge,
+      reason: `Requires technology: ${missingTech}.`,
+    };
+  }
+
+  return {
+    allowed: true,
+    direction: 'upgrade',
+    isFree: false,
+    cost: upgradeDef.cost,
+    buildTimeHours: upgradeDef.buildTimeHours,
+    buildersRequired: upgradeDef.buildersRequired,
+    targetAge: upgradeDef.targetAge,
+    reason: null,
+  };
+}
+
+/**
+ * Computes round-trip timestamps for unit field actions (gather, collect_water, hunt),
+ * scaling base work duration by the best unlocked tool technology.
  *
  * @param {object} params - Action timing inputs.
  * @param {{ x: number, y: number }} [params.from={ x: 12, y: 12 }] - Main village tile.
  * @param {{ x: number, y: number }} params.to - Target action tile.
  * @param {string} params.unitId - Dispatched unit ID.
  * @param {number} [params.workDurationHours] - Optional work time override in in-game hours.
+ * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
  * @param {number} [params.nowMs=0] - Real-time epoch timestamp when dispatched.
  * @returns {{
  *   distanceKm: number,
@@ -327,6 +579,7 @@ export function calculateUnitActionTimestamps({
   to,
   unitId,
   workDurationHours,
+  unlockedTechs = STARTER_UNLOCKED_TECHS,
   nowMs = 0,
 }) {
   const unitDef = UNITS[unitId];
@@ -334,7 +587,13 @@ export function calculateUnitActionTimestamps({
     throw new Error(`Unknown unitId "${unitId}".`);
   }
 
-  const hours = workDurationHours ?? unitDef.workDurationHours;
+  const bestTool = getBestUnlockedTool(unlockedTechs, 'general');
+  const speedMult = bestTool?.modifiers?.workSpeedMultiplier ?? 1.0;
+  const hours =
+    workDurationHours !== undefined
+      ? workDurationHours
+      : unitDef.workDurationHours / speedMult;
+
   const distanceKm = calculateTileDistanceKm(from, to);
   const oneWayTravelMs = Math.round((distanceKm / unitDef.speedKmPerHour) * REAL_MS_PER_INGAME_HOUR);
   const workMs = Math.round(hours * REAL_MS_PER_INGAME_HOUR);
@@ -395,13 +654,14 @@ function pickPannableNuggetId(rng, availableOres = []) {
 
 /**
  * Resolves a probabilistic yield roll for a Gatherer or Hunter acting on a tile.
- * Gather/hunt rolls may return nothing (`foundNothing: true`); `collect_water` on water returns 1 jar (10 bowls).
+ * Applies the best unlocked tool modifiers (`nothingWeightMultiplier`, `yieldBonus`).
  *
  * @param {object} params - Action resolution inputs.
  * @param {string} params.unitId - 'gatherer' | 'hunter'.
  * @param {string} params.action - 'gather' | 'collect_water' | 'hunt'.
  * @param {{ isWater?: boolean, forestDensity?: number }} params.tile - Target Territory tile.
  * @param {string[]} [params.availableOres=[]] - Regional Territory ores for panning bias.
+ * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
  * @param {() => number} params.rng - Explicit seeded PRNG returning [0, 1) (Math.random is never called).
  * @returns {{
  *   terrain: 'water' | 'forest' | 'fields',
@@ -411,7 +671,14 @@ function pickPannableNuggetId(rng, availableOres = []) {
  * }} Deterministic action yield.
  * @throws {Error} When unit cannot perform the action, tile biome is invalid, or `rng` is missing.
  */
-export function rollTileActionYield({ unitId, action, tile, availableOres = [], rng }) {
+export function rollTileActionYield({
+  unitId,
+  action,
+  tile,
+  availableOres = [],
+  unlockedTechs = STARTER_UNLOCKED_TECHS,
+  rng,
+}) {
   const unitDef = UNITS[unitId];
   if (!unitDef) {
     throw new Error(`Unknown unitId "${unitId}".`);
@@ -443,23 +710,32 @@ export function rollTileActionYield({ unitId, action, tile, availableOres = [], 
     throw new Error(`No yield table configured for action "${action}" on "${terrain}".`);
   }
 
-  const totalWeight = table.reduce((sum, entry) => sum + entry.weight, 0);
-  let cursor = rng() * totalWeight;
-  let picked = table[table.length - 1];
+  const bestTool = getBestUnlockedTool(unlockedTechs, 'general');
+  const nothingMult = bestTool?.modifiers?.nothingWeightMultiplier ?? 1.0;
+  const yieldBonus = bestTool?.modifiers?.yieldBonus ?? 0;
 
-  for (const entry of table) {
-    if (cursor < entry.weight) {
+  const adjustedEntries = table.map((entry) => ({
+    ...entry,
+    effectiveWeight: entry.itemId === null ? entry.weight * nothingMult : entry.weight,
+  }));
+
+  const totalWeight = adjustedEntries.reduce((sum, entry) => sum + entry.effectiveWeight, 0);
+  let cursor = rng() * totalWeight;
+  let picked = adjustedEntries[adjustedEntries.length - 1];
+
+  for (const entry of adjustedEntries) {
+    if (cursor < entry.effectiveWeight) {
       picked = entry;
       break;
     }
-    cursor -= entry.weight;
+    cursor -= entry.effectiveWeight;
   }
 
   if (!picked.itemId) {
     return { terrain, items: {}, waterBowls: 0, foundNothing: true };
   }
 
-  const qty = rollInt(rng, picked.min, picked.max);
+  const qty = rollInt(rng, picked.min, picked.max + yieldBonus);
   const itemId =
     picked.itemId === 'ore_nugget' ? pickPannableNuggetId(rng, availableOres) : picked.itemId;
 

@@ -4,6 +4,7 @@ export * from './config/resources.js';
 export * from './config/units.js';
 export * from './config/buildings.js';
 export * from './config/recipes.js';
+export * from './config/technologies.js';
 export * from './generators/prng.js';
 export * from './generators/noise.js';
 export * from './generators/continentGenerator.js';

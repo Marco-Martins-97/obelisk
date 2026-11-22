@@ -15,6 +15,7 @@
  * @param {string} [config.age='stone'] - Tech age of the recipe.
  * @param {number} [config.minBuildingLevel=1] - Minimum building level needed.
  * @param {string | null} [config.unlocksAge=null] - Age unlocked on completion (if any).
+ * @param {string | null} [config.unlocksTech=null] - Technology branch unlocked on completion (if any).
  * @param {string} [config.description=''] - Short UI description.
  * @returns {Readonly<object>} Immutable recipe template.
  * @throws {Error} When inputs, outputs, buildingId, or craftTimeHours are invalid.
@@ -44,6 +45,7 @@ export function createRecipe(config) {
     outputs: Object.freeze({ ...config.outputs }),
     craftTimeHours: config.craftTimeHours,
     unlocksAge: config.unlocksAge ?? null,
+    unlocksTech: config.unlocksTech ?? null,
     description: config.description ?? '',
   });
 }
@@ -68,15 +70,6 @@ export const RECIPES = Object.freeze({
     craftTimeHours: 0.4,
     description: 'Grill caught river or lake fish over the firepit.',
   }),
-  upgrade_stone_tool: createRecipe({
-    id: 'upgrade_stone_tool',
-    name: 'Upgrade to Stone Tool',
-    buildingId: 'firepit',
-    inputs: { wood_tool: 1, small_stones: 2, sticks: 1 },
-    outputs: { stone_tool: 1 },
-    craftTimeHours: 1.0,
-    description: 'Fire-harden and knap a starter wooden tool into a stone tool.',
-  }),
   craft_charcoal: createRecipe({
     id: 'craft_charcoal',
     name: 'Burn Charcoal',
@@ -94,7 +87,8 @@ export const RECIPES = Object.freeze({
     outputs: { copper_ingot: 1 },
     craftTimeHours: 2.5,
     unlocksAge: 'copper',
-    description: 'Smelt 10 copper nuggets with charcoal to unlock the Copper Age.',
+    unlocksTech: 'copper_age',
+    description: 'Smelt 10 copper nuggets with charcoal to trigger the Copper Age tech branch.',
   }),
 });
 

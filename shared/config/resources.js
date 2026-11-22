@@ -173,25 +173,7 @@ export const RESOURCES = Object.freeze({
     description: 'Grilled fish cooked at a Firepit.',
   }),
 
-  // Tools
-  wood_tool: createResource({
-    id: 'wood_tool',
-    name: 'Wooden Tool',
-    category: 'tool',
-    sizeClass: 3,
-    tier: 1,
-    description: 'Starter wooden hand tool provided in the Main building.',
-  }),
-  stone_tool: createResource({
-    id: 'stone_tool',
-    name: 'Stone Tool',
-    category: 'tool',
-    sizeClass: 3,
-    tier: 2,
-    description: 'Knapped stone tool upgraded from a wooden tool at a Firepit.',
-  }),
-
-  // Ore nuggets (every world ore except flux and coal)
+  // Copper Age evolution milestone item
   copper_nugget: createResource({
     id: 'copper_nugget',
     name: 'Copper Nugget',
@@ -271,10 +253,11 @@ export const STARTER_INVENTORY = Object.freeze({
 
 /** Starter Main village pools at spawn (before any units are trained). */
 export const STARTER_VILLAGE_POOLS = Object.freeze({
+  mainTier: 1,
+  mainLevel: 1,
   storageCapacity: 100,
   basePopCapacity: 10,
   food: 5,
   water: 5,
   waterCapacity: 10,
-  starterTool: 'wood_tool',
 });
