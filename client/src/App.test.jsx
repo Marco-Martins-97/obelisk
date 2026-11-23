@@ -63,6 +63,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(screen.getByText('50/250')).toBeInTheDocument();
     expect(screen.getByText('5/10')).toBeInTheDocument();
     expect(screen.getByText('0/10')).toBeInTheDocument();
+    expect(screen.getByLabelText('In-game calendar')).toHaveTextContent(/-?\d+°C/);
 
     // Small continent panel removed; right sidebar starts directly with Active Timers -> Units -> Stockpile -> Techs.
     expect(screen.queryByLabelText('Continent Map Canvas')).not.toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { BIOMES, ROCK_TYPES } from '@obelisk/shared';
+import { BIOMES, ROCK_TYPES, normalizedTempToCelsius } from '@obelisk/shared';
 
 /**
  * Side inspector showing selected Continent tile metadata, hosted ores,
@@ -54,7 +54,10 @@ export default function TileInspector({
                 <dt className="text-slate-400">Elevation</dt>
                 <dd className="text-slate-100">{selectedTile.elevation.toFixed(3)}</dd>
                 <dt className="text-slate-400">Temperature</dt>
-                <dd className="text-slate-100">{selectedTile.temperature.toFixed(3)}</dd>
+                <dd className="text-slate-100">
+                  {normalizedTempToCelsius(selectedTile.temperature)}°C (
+                  {selectedTile.temperature.toFixed(2)})
+                </dd>
                 <dt className="text-slate-400">Moisture</dt>
                 <dd className="text-slate-100">{selectedTile.moisture.toFixed(3)}</dd>
                 <dt className="text-slate-400">tileSeed</dt>
@@ -85,7 +88,8 @@ export default function TileInspector({
           {viewMode === 'dev' && (
             <div className="mt-1 space-y-0.5 text-sky-300">
               <div>
-                E:{hoveredSubTile.elevation.toFixed(2)} T:{hoveredSubTile.temperature.toFixed(2)} M:
+                E:{hoveredSubTile.elevation.toFixed(2)} T:
+                {normalizedTempToCelsius(hoveredSubTile.temperature)}°C M:
                 {hoveredSubTile.moisture.toFixed(2)} · For:{hoveredSubTile.forestDensity.toFixed(2)} ·{' '}
                 {hoveredSubTile.buildable ? 'Buildable' : 'Blocked'}
               </div>

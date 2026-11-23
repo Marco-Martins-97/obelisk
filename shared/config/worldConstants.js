@@ -20,6 +20,10 @@ export const CONTINENT_TILE_DISTANCE_KM = DEFAULT_TERRITORY_SIZE * TERRITORY_TIL
 /** Width/height of the centered starter explored box in a Territory (7x7 = 49 tiles). */
 export const INITIAL_TERRITORY_EXPLORE_SIZE = 7;
 
+/** Ambient climate Celsius scale mapped from normalized [0, 1] temperatures. */
+export const MIN_TEMP_CELSIUS = -20;
+export const MAX_TEMP_CELSIUS = 40;
+
 /** Radius around an explored action tile revealed upon completion (1 => 3x3 box). */
 export const EXPLORE_REVEAL_RADIUS = 1;
 

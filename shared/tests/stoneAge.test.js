@@ -36,12 +36,14 @@ import {
   createTechnology,
   createUnit,
   generateContinent,
+  getAmbientTemperatureCelsius,
   getBestUnlockedTool,
   getCalendarState,
   getExploredBounds,
   getMainTierChangeRule,
   getTaskPhase,
   isTechTriggerSatisfied,
+  normalizedTempToCelsius,
   pickStarterSpawnTile,
   resolveTeamActionYield,
   revealBox3x3,
@@ -475,6 +477,39 @@ describe('Probabilistic tile yields, collect_water & biome classification', () =
     expect(waterDrops.has('copper_nugget')).toBe(true);
     expect(waterDrops.has('flux_nugget')).toBe(false);
     expect(waterDrops.has('coal_nugget')).toBe(false);
+
+    // Non-copper Granite rock still drops common copper_nugget more often than very_rare gems,
+    // and copper-hosting rock increases copper_nugget drop counts (~2x weight).
+    const countPannedNuggets = (availableOres) => {
+      const counts = { copper_nugget: 0, gems_nugget: 0 };
+      const sampleRng = createPrng(7777);
+      for (let i = 0; i < 600; i += 1) {
+        const res = rollTileActionYield({
+          unitId: 'gatherer',
+          action: 'gather',
+          tile: waterTile,
+          availableOres,
+          rng: sampleRng,
+        });
+        for (const [id, q] of Object.entries(res.items)) {
+          if (counts[id] !== undefined) counts[id] += q;
+        }
+      }
+      return counts;
+    };
+
+    const graniteDrops = countPannedNuggets(['tin', 'silver', 'gold']);
+    const limestoneDrops = countPannedNuggets(['flux', 'copper']);
+    expect(graniteDrops.copper_nugget).toBeGreaterThan(20);
+    expect(graniteDrops.copper_nugget).toBeGreaterThan(graniteDrops.gems_nugget);
+    expect(limestoneDrops.copper_nugget).toBeGreaterThan(graniteDrops.copper_nugget);
+
+    // Celsius conversion (-20°C..+40°C) + seasonal & diurnal climate adjustments.
+    expect(normalizedTempToCelsius(0)).toBe(-20);
+    expect(normalizedTempToCelsius(0.5)).toBe(10);
+    expect(normalizedTempToCelsius(1)).toBe(40);
+    expect(getAmbientTemperatureCelsius(0.5, { season: 'summer', isDaylight: true })).toBe(18);
+    expect(getAmbientTemperatureCelsius(0.5, { season: 'winter', isDaylight: false })).toBe(0);
 
     const forestHunt = new Set();
     for (let i = 0; i < 80; i += 1) {

@@ -16,6 +16,8 @@ import {
   EXPLORE_REVEAL_RADIUS,
   HOURS_PER_INGAME_DAY,
   INITIAL_TERRITORY_EXPLORE_SIZE,
+  MAX_TEMP_CELSIUS,
+  MIN_TEMP_CELSIUS,
   MONTHS_PER_SEASON,
   REAL_MS_PER_INGAME_HOUR,
   SEASONS_PER_YEAR,
@@ -23,8 +25,56 @@ import {
   TERRITORY_TILE_DISTANCE_KM,
   WATER_BOWLS_PER_JAR,
 } from '../config/worldConstants.js';
+import { ORES } from '../config/worldGeology.js';
 import { createPrng, hashSeed } from '../generators/prng.js';
 import { TERRITORY_FOREST_THRESHOLD } from '../generators/territoryGenerator.js';
+
+/** Seasonal temperature shifts in °C relative to tile baseline climate. */
+export const SEASON_TEMP_OFFSET_C = Object.freeze({
+  spring: 0,
+  summer: 6,
+  autumn: -1,
+  winter: -8,
+});
+
+/**
+ * Converts normalized [0, 1] climate temperature into degrees Celsius (`-20°C..+40°C`).
+ *
+ * @param {number} normalizedTemp - Normalized climate value in [0, 1].
+ * @returns {number} Rounded temperature in degrees Celsius.
+ */
+export function normalizedTempToCelsius(normalizedTemp) {
+  const clamped = Math.max(0, Math.min(1, Number(normalizedTemp) || 0));
+  return Math.round(
+    MIN_TEMP_CELSIUS + clamped * (MAX_TEMP_CELSIUS - MIN_TEMP_CELSIUS),
+  );
+}
+
+/**
+ * Computes ambient Celsius temperature combining tile base climate with season and day/night.
+ *
+ * @param {number} baseNormalizedTemp - Normalized tile temperature in [0, 1].
+ * @param {{ season?: string, isDaylight?: boolean }} [calendar={}] - Active calendar state.
+ * @returns {number} Ambient temperature in degrees Celsius.
+ */
+export function getAmbientTemperatureCelsius(baseNormalizedTemp, calendar = {}) {
+  const baseC = normalizedTempToCelsius(baseNormalizedTemp);
+  const seasonOffset = SEASON_TEMP_OFFSET_C[calendar.season] ?? 0;
+  const diurnalOffset =
+    calendar.isDaylight === undefined ? 0 : calendar.isDaylight ? 2 : -2;
+  return baseC + seasonOffset + diurnalOffset;
+}
+
+/** Base river-panning weights by ore rarity tier (`common` > `uncommon` > `rare` > `very_rare`). */
+export const ORE_RARITY_PANNING_WEIGHTS = Object.freeze({
+  common: 40,
+  uncommon: 16,
+  rare: 6,
+  very_rare: 2,
+});
+
+/** Weight multiplier applied when panning water tiles inside a rockType that hosts the ore. */
+export const LOCAL_ROCK_ORE_MULTIPLIER = 2;
 
 /**
  * Probabilistic gather and hunt tables keyed by unit -> biome category.
@@ -44,9 +94,9 @@ export const TILE_ACTION_TABLES = Object.freeze({
       { itemId: null, min: 0, max: 0, weight: 18 },
     ]),
     water: Object.freeze([
-      { itemId: 'clay', min: 1, max: 2, weight: 50 },
-      { itemId: 'ore_nugget', min: 1, max: 1, weight: 32 },
-      { itemId: null, min: 0, max: 0, weight: 18 },
+      { itemId: 'clay', min: 1, max: 2, weight: 42 },
+      { itemId: 'ore_nugget', min: 1, max: 1, weight: 42 },
+      { itemId: null, min: 0, max: 0, weight: 16 },
     ]),
   }),
   hunt: Object.freeze({
@@ -753,7 +803,8 @@ function rollInt(rng, min, max) {
 }
 
 /**
- * Selects which ore nugget drops when panning water tiles.
+ * Selects which ore nugget drops when panning water tiles using ore rarity weights
+ * and a 2x bonus when the ore is natively hosted by the Territory's rockType.
  * Never returns flux or coal; can roll any ore in `PANNABLE_ORE_IDS`.
  *
  * @param {() => number} rng - Seeded PRNG function returning [0, 1).
@@ -761,12 +812,26 @@ function rollInt(rng, min, max) {
  * @returns {string} Nugget resourceId (e.g. 'copper_nugget').
  */
 function pickPannableNuggetId(rng, availableOres = []) {
-  const regionalPannable = availableOres.filter((ore) => PANNABLE_ORE_IDS.includes(ore));
-  // Bias 60% toward local rock geology when available, while still letting players pan any world ore (except flux/coal).
-  const pool =
-    regionalPannable.length > 0 && rng() < 0.6 ? regionalPannable : PANNABLE_ORE_IDS;
-  const chosenOre = pool[Math.floor(rng() * pool.length)];
-  return `${chosenOre}_nugget`;
+  const localSet = new Set(availableOres);
+  let totalWeight = 0;
+
+  const weighted = PANNABLE_ORE_IDS.map((oreId) => {
+    const rarity = ORES[oreId]?.rarity ?? 'common';
+    const baseWeight = ORE_RARITY_PANNING_WEIGHTS[rarity] ?? 10;
+    const weight = localSet.has(oreId) ? baseWeight * LOCAL_ROCK_ORE_MULTIPLIER : baseWeight;
+    totalWeight += weight;
+    return { oreId, weight };
+  });
+
+  let cursor = rng() * totalWeight;
+  for (const entry of weighted) {
+    if (cursor < entry.weight) {
+      return `${entry.oreId}_nugget`;
+    }
+    cursor -= entry.weight;
+  }
+
+  return `${weighted[weighted.length - 1].oreId}_nugget`;
 }
 
 /**

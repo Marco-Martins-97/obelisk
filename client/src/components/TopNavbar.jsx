@@ -10,6 +10,7 @@ import { formatClockTime } from '../utils/timeFormat.js';
  * @param {number} props.speedFactor
  * @param {(nextSpeed: number) => void} props.onSpeedChange
  * @param {object} props.calendar
+ * @param {number | null} [props.temperatureC=null]
  * @param {() => void} props.onResetVillage
  * @returns {import('react').JSX.Element}
  */
@@ -17,6 +18,7 @@ export default function TopNavbar({
   speedFactor,
   onSpeedChange,
   calendar,
+  temperatureC = null,
   onResetVillage,
 }) {
   const navLinkClass = ({ isActive }) =>
@@ -52,6 +54,11 @@ export default function TopNavbar({
               Y{calendar.year} M{calendar.monthOfSeason} D{calendar.dayOfMonth}
             </span>
             <span className="text-slate-400">{formatClockTime(calendar.hourOfDay)}</span>
+            {temperatureC !== null && (
+              <span className="font-semibold text-cyan-300" title="Ambient Temperature">
+                {temperatureC}°C
+              </span>
+            )}
             <span
               className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
                 calendar.isDaylight

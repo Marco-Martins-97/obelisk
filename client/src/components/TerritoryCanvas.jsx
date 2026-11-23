@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getExploredBounds } from '@obelisk/shared';
+import { getExploredBounds, normalizedTempToCelsius } from '@obelisk/shared';
 import { getDevTileColor } from '../utils/mapColors.js';
 import {
   clampPanOffsets,
@@ -452,7 +452,7 @@ export default function TerritoryCanvas({
                   {hoveredTile.inSettlementZone && ' · Settlement (7×7)'}
                   {hoveredTile.isWater ? ` · Water (${hoveredTile.waterType})` : ''}
                   {viewMode === 'dev' &&
-                    ` · E:${hoveredTile.elevation.toFixed(2)} For:${hoveredTile.forestDensity.toFixed(2)}`}
+                    ` · E:${hoveredTile.elevation.toFixed(2)} T:${normalizedTempToCelsius(hoveredTile.temperature)}°C For:${hoveredTile.forestDensity.toFixed(2)}`}
                 </>
               )}
               {coordsOnlyTooltip && hoveredShrouded ? ' · Fog' : ''}

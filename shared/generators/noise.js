@@ -119,7 +119,9 @@ export function fbm2D(
     frequency *= lacunarity;
   }
 
-  // Perlin gradient dot products peak near +/-1; map [-1, 1] -> [0, 1] and clamp.
-  const normalized = (total / maxAmplitude + 1) * 0.5;
+  // Expand multi-octave Perlin contrast (~1.75x) before mapping [-1, 1] -> [0, 1]
+  // so Elevation, Moisture, and Temperature reach the full [0.0, 1.0] dynamic range.
+  const scaled = (total / maxAmplitude) * 1.75;
+  const normalized = (scaled + 1) * 0.5;
   return Math.max(0, Math.min(1, normalized));
 }

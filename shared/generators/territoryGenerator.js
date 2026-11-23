@@ -282,10 +282,7 @@ export function generateTerritory(
       const elevJitter = (fbm2D(elevNoise, x, y, { scale: 0.16, octaves: 3 }) - 0.5) * 0.14;
       const moistJitter = (fbm2D(moistNoise, x, y, { scale: 0.14, octaves: 2 }) - 0.5) * 0.14;
 
-      const elevation = clamp01(baseElev + elevJitter);
-      const temperature = clamp01(
-        baseTemp - Math.max(0, elevation - ELEVATION_BANDS.SEA_LEVEL) * 0.15,
-      );
+      const rawElevation = clamp01(baseElev + elevJitter);
       const moisture = clamp01(baseMoist + moistJitter);
 
       const inSettlementZone =
@@ -294,7 +291,18 @@ export function generateTerritory(
         Math.abs(y - centerCoord) <= halfFootprint;
 
       const lakeThreshold = ELEVATION_BANDS.SEA_LEVEL - 0.04 + moisture * 0.06;
-      const isLake = !inSettlementZone && elevation < lakeThreshold;
+      const isLake = !inSettlementZone && rawElevation < lakeThreshold;
+
+      // On buildable land Continent tiles adjacent to oceans, dry land sub-tiles cannot
+      // dip below SEA_LEVEL and turn into unbuildable sub-tiles.
+      const elevation =
+        !isLake && center.elevation >= ELEVATION_BANDS.SEA_LEVEL
+          ? Math.max(ELEVATION_BANDS.SEA_LEVEL, rawElevation)
+          : rawElevation;
+
+      const temperature = clamp01(
+        baseTemp - Math.max(0, elevation - ELEVATION_BANDS.SEA_LEVEL) * 0.15,
+      );
 
       // Compute independent ore density [0, 1] for each ore allowed by rockType.
       const ores = {};

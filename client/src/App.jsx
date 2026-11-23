@@ -6,6 +6,7 @@ import {
   ROCK_TYPES,
   generateContinent,
   generateTerritory,
+  getAmbientTemperatureCelsius,
   getWorldTileContext,
   pickStarterSpawnTile,
 } from '@obelisk/shared';
@@ -128,6 +129,7 @@ function PlayableVillageWorkspace({
           speedFactor={village.state.speedFactor}
           onSpeedChange={village.setSpeedFactor}
           calendar={village.calendar}
+          temperatureC={getAmbientTemperatureCelsius(selectedTile.temperature, village.calendar)}
           onResetVillage={() => {
             setSelectedBuildingId(null);
             setTileMenu(null);

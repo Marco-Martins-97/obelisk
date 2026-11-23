@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ROCK_TYPES } from '../config/worldGeology.js';
+import { ELEVATION_BANDS, ROCK_TYPES } from '../config/worldGeology.js';
 import { generateContinent } from '../generators/continentGenerator.js';
 import {
   TERRITORY_FOREST_THRESHOLD,
@@ -163,5 +163,34 @@ describe('Stage 1.3: Territory Generator', () => {
 
     expect(territory.tiles).toHaveLength(625);
     expect(elapsedMs).toBeLessThan(5);
+  });
+
+  it('prevents dry coastal land sub-tiles from dipping below SEA_LEVEL and becoming unbuildable', () => {
+    const coastalContext = {
+      center: {
+        elevation: 0.39,
+        temperature: 0.55,
+        moisture: 0.4,
+        rockType: 'granite',
+        biome: 'grassland',
+        buildable: true,
+        isObelisk: false,
+      },
+      north: { elevation: 0.12, temperature: 0.5, moisture: 0.8 },
+      south: { elevation: 0.48, temperature: 0.58, moisture: 0.4 },
+      east: { elevation: 0.45, temperature: 0.55, moisture: 0.4 },
+      west: { elevation: 0.15, temperature: 0.5, moisture: 0.8 },
+    };
+
+    const territory = generateTerritory('coastal-buildable-fix', coastalContext);
+    const dryLowlandTiles = territory.tiles.filter(
+      (t) => !t.isWater && t.elevation < ELEVATION_BANDS.MOUNTAIN_LEVEL,
+    );
+
+    expect(dryLowlandTiles.length).toBeGreaterThan(0);
+    for (const tile of dryLowlandTiles) {
+      expect(tile.elevation).toBeGreaterThanOrEqual(ELEVATION_BANDS.SEA_LEVEL);
+      expect(tile.buildable).toBe(true);
+    }
   });
 });

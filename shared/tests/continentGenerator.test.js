@@ -65,4 +65,30 @@ describe('Stage 1.2: Continent Generator', () => {
     expect(continent.tiles).toHaveLength(10000);
     expect(elapsedMs).toBeLessThan(50);
   });
+
+  it('exercises wide [0, 1] range producing deep oceans (< 0.25) and mountains (> 0.78)', () => {
+    const continent = generateContinent('range-check-alpha', { size: 100 });
+    let minElev = 1;
+    let maxElev = 0;
+    let minMoist = 1;
+    let maxMoist = 0;
+    let minTemp = 1;
+    let maxTemp = 0;
+
+    for (const tile of continent.tiles) {
+      if (tile.elevation < minElev) minElev = tile.elevation;
+      if (tile.elevation > maxElev) maxElev = tile.elevation;
+      if (tile.moisture < minMoist) minMoist = tile.moisture;
+      if (tile.moisture > maxMoist) maxMoist = tile.moisture;
+      if (tile.temperature < minTemp) minTemp = tile.temperature;
+      if (tile.temperature > maxTemp) maxTemp = tile.temperature;
+    }
+
+    expect(minElev).toBeLessThan(0.25);
+    expect(maxElev).toBeGreaterThan(ELEVATION_BANDS.MOUNTAIN_LEVEL);
+    expect(minMoist).toBeLessThan(0.25);
+    expect(maxMoist).toBeGreaterThan(0.75);
+    expect(minTemp).toBeLessThan(0.25);
+    expect(maxTemp).toBeGreaterThan(0.75);
+  });
 });
