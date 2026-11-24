@@ -33,6 +33,7 @@ import {
   calculateTileDistanceKm,
   calculateTotalStoredFood,
   calculateUnitActionTimestamps,
+  calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
   classifyTerritoryTile,
   consumeStoredFoodFEFO,
@@ -57,6 +58,7 @@ import {
   resolveTeamActionYield,
   revealBox3x3,
   rollTileActionYield,
+  trimUnitsBalanced,
   unlockContinentRingIfTerritoryComplete,
 } from '../index.js';
 
@@ -784,5 +786,29 @@ describe('Storage pooling (M1), FEFO auto-eating (C1), fractional spoilage (S1),
       rng: createPrng(1),
     });
     expect(sickWater.waterBowls).toBe(2);
+  });
+
+  it('uses basic materials for Main/House/Warehouse/Drying Rack, scales Main water capacity by level, and trims starved units evenly', () => {
+    for (const id of ['main', 'house', 'warehouse', 'drying_rack']) {
+      expect(Object.keys(BUILDINGS[id].cost).every((res) => ['sticks', 'pelts', 'straw'].includes(res))).toBe(true);
+    }
+    expect(BUILDINGS.firepit.cost.small_stones).toBeGreaterThan(0);
+    expect(BUILDINGS.kiln.cost.small_stones).toBeGreaterThan(0);
+
+    expect(calculateWaterCapacity([{ buildingId: 'main', level: 1, status: 'active' }])).toBe(10);
+    expect(calculateWaterCapacity([{ buildingId: 'main', level: 2, status: 'active' }])).toBe(20);
+    expect(calculateWaterCapacity([{ buildingId: 'main', level: 3, status: 'active' }])).toBe(30);
+
+    // Balanced starvation casualties: never wipes out all Hunters/Gatherers first while another role has > 1.
+    const step1 = trimUnitsBalanced({ gatherer: 2, hunter: 2, builder: 1 }, 1);
+    expect(step1.units).toEqual({ gatherer: 2, hunter: 1, builder: 1 });
+    expect(step1.trimmedTotal).toBe(1);
+
+    const step2 = trimUnitsBalanced(step1.units, 1);
+    expect(step2.units).toEqual({ gatherer: 1, hunter: 1, builder: 1 });
+
+    // Once all roles are down to 1, keeps the last Gatherer alive longest.
+    const step3 = trimUnitsBalanced(step2.units, 2);
+    expect(step3.units).toEqual({ gatherer: 1, hunter: 0, builder: 0 });
   });
 });

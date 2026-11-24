@@ -19,6 +19,7 @@ import {
   calculateStorageUsed,
   calculateTeamActionTimestamps,
   calculateTotalStoredFood,
+  calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
   consumeStoredFoodFEFO,
   createInitialTerritoryFog,
@@ -30,6 +31,7 @@ import {
   isTechTriggerSatisfied,
   resolveTeamActionYield,
   revealBox3x3,
+  trimUnitsBalanced,
   unlockContinentRingIfTerritoryComplete,
 } from '@obelisk/shared';
 
@@ -222,8 +224,6 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
   let nextSeq = prev.nextSeq;
   const newLogs = [];
 
-  const maxWater = BUILDINGS.main.waterCapacity;
-
   // 1. Resolve in-progress tasks chronologically.
   const nextTasks = [];
   const sortedTasks = [...prev.tasks].sort(
@@ -366,6 +366,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
 
       const logParts = [];
       if (outcome.waterBowls > 0) {
+        const maxWater = calculateWaterCapacity(buildings);
         water = Math.min(maxWater, water + outcome.waterBowls);
         logParts.push(`+${outcome.waterBowls} water bowls (${water}/${maxWater})`);
       }
@@ -486,18 +487,12 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
         break;
       }
 
-      let curPopUsed = calculatePopUsed({ units, buildings });
+      const curPopUsed = calculatePopUsed({ units, buildings });
       if (curPopUsed > starvStep.effectiveMaxPop) {
-        let trimmed = 0;
-        for (const uId of ['gatherer', 'hunter', 'builder']) {
-          while (curPopUsed > starvStep.effectiveMaxPop && (units[uId] ?? 0) > 0) {
-            units[uId] -= 1;
-            curPopUsed -= UNITS[uId].popCost;
-            trimmed += 1;
-          }
-        }
-        if (trimmed > 0) {
-          newLogs.push(`Lost ${trimmed} villager(s) due to famine population decline.`);
+        const trimRes = trimUnitsBalanced(units, curPopUsed - starvStep.effectiveMaxPop);
+        units = trimRes.units;
+        if (trimRes.trimmedTotal > 0) {
+          newLogs.push(`Lost ${trimRes.trimmedTotal} villager(s) due to famine population decline.`);
         }
       }
     }
@@ -581,6 +576,7 @@ function loadSavedOrFreshState(storageKey, worldParams) {
  * @param {{ x: number, y: number }} params.spawnTile - Starter Continent coordinates.
  * @param {number} params.continentSize - Continent grid dimension.
  * @param {object} params.territory - Generated home Territory object.
+ * @param {number | null} [params.fixedSpeedFactor=null] - Locks simulation speed (e.g., 6 in Offline mode).
  * @returns {object} Village state, computed HUD metrics, and action dispatchers.
  */
 export function useStoneAgeVillage({
@@ -589,6 +585,7 @@ export function useStoneAgeVillage({
   spawnTile,
   continentSize,
   territory,
+  fixedSpeedFactor = null,
 }) {
   const sessionKey = `${storageKey}|${seed}|${spawnTile.x},${spawnTile.y}|${continentSize}|${territory.size}`;
   const worldParams = useMemo(
@@ -634,7 +631,7 @@ export function useStoneAgeVillage({
     }
   }, [storageKey, state]);
 
-  // 250ms simulation tick scaling real delta by (speedFactor / 6).
+  // 250ms simulation tick scaling real delta by (effectiveSpeedFactor / 6).
   useEffect(() => {
     lastWallClockRef.current = Date.now();
     const timer = window.setInterval(() => {
@@ -643,7 +640,8 @@ export function useStoneAgeVillage({
       lastWallClockRef.current = now;
 
       updateSessionState((prev) => {
-        const virtualDeltaMs = realDeltaMs * (prev.speedFactor / 6);
+        const activeSpeed = fixedSpeedFactor ?? prev.speedFactor;
+        const virtualDeltaMs = realDeltaMs * (activeSpeed / 6);
         return advanceVillageSimulation(
           prev,
           prev.virtualTimeMs + virtualDeltaMs,
@@ -654,7 +652,7 @@ export function useStoneAgeVillage({
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [updateSessionState, territory, spawnTile]);
+  }, [updateSessionState, territory, spawnTile, fixedSpeedFactor]);
 
   const calendar = useMemo(() => getCalendarState(state.virtualTimeMs), [state.virtualTimeMs]);
   const territoryFogMask = useMemo(() => new Uint8Array(state.territoryFog), [state.territoryFog]);
@@ -666,7 +664,8 @@ export function useStoneAgeVillage({
   const preservedFoodCapacity = storageProfile.preservedFoodCapacity;
   const storageUsed = calculateStorageUsed(state.inventory);
   const storedFood = calculateTotalStoredFood(state.inventory, state.foodCarry ?? 0);
-  const waterCapacity = BUILDINGS.main.waterCapacity;
+  const waterCapacity = calculateWaterCapacity(state.buildings);
+  const effectiveSpeedFactor = fixedSpeedFactor ?? state.speedFactor;
   const buildingMaxPop = calculateMaxPopulation(state.buildings);
   const maxPop = state.isAbandoned
     ? 0
@@ -707,9 +706,10 @@ export function useStoneAgeVillage({
 
   const setSpeedFactor = useCallback(
     (nextSpeed) => {
+      if (fixedSpeedFactor !== null) return;
       updateSessionState((prev) => ({ ...prev, speedFactor: Number(nextSpeed) }));
     },
-    [updateSessionState],
+    [updateSessionState, fixedSpeedFactor],
   );
 
   const resetVillage = useCallback(() => {
@@ -1278,6 +1278,7 @@ export function useStoneAgeVillage({
     preservedFoodCapacity,
     storedFood,
     waterCapacity,
+    effectiveSpeedFactor,
     buildingMaxPop,
     maxPop,
     popUsed,

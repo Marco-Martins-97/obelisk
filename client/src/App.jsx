@@ -102,6 +102,7 @@ function PlayableVillageWorkspace({
     spawnTile,
     continentSize: continent.size,
     territory,
+    fixedSpeedFactor: isOnline ? 6 : null,
   });
 
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
@@ -126,8 +127,9 @@ function PlayableVillageWorkspace({
       {/* Sticky header stack: TopNavbar -> (optional MapControls) -> VillageHeaderBar */}
       <div className="sticky top-0 z-40 bg-slate-950/95 backdrop-blur">
         <TopNavbar
-          speedFactor={village.state.speedFactor}
+          speedFactor={isOnline ? 6 : village.state.speedFactor}
           onSpeedChange={village.setSpeedFactor}
+          showSpeedSelect={!isOnline}
           calendar={village.calendar}
           temperatureC={getAmbientTemperatureCelsius(selectedTile.temperature, village.calendar)}
           onResetVillage={() => {

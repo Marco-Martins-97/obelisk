@@ -36,6 +36,48 @@ export function formatGameDurationHMS(remainingMs) {
 }
 
 /**
+ * Converts virtual remaining time (stored at 6x scale) into real wall-clock remaining `HH:MM:SS`.
+ * Example: 12 in-game minutes at 6x equals 2 real minutes (`00:02:00`).
+ *
+ * @param {number} virtualRemainingMs - Remaining virtual milliseconds.
+ * @param {number} [speedFactor=6] - Active simulation speed multiplier.
+ * @returns {string} Zero-padded real-time `HH:MM:SS` remaining duration.
+ */
+export function formatRealDurationHMS(virtualRemainingMs, speedFactor = 6) {
+  if (!Number.isFinite(virtualRemainingMs) || virtualRemainingMs <= 0) return '00:00:00';
+  const safeSpeed = Number.isFinite(speedFactor) && speedFactor > 0 ? speedFactor : 6;
+  const realMs = (virtualRemainingMs * 6) / safeSpeed;
+  const totalSeconds = Math.max(0, Math.ceil(realMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+/**
+ * Formats the exact local wall-clock timestamp (`HH:MM:SS`) when a task will conclude.
+ * Example: started at 10:00:00 needing 00:02:15 real time displays `10:02:15`.
+ *
+ * @param {number} virtualRemainingMs - Remaining virtual milliseconds.
+ * @param {number} [speedFactor=6] - Active simulation speed multiplier.
+ * @param {number} [nowWallMs=Date.now()] - Current wall-clock epoch ms.
+ * @returns {string} Local `HH:MM:SS` completion clock timestamp.
+ */
+export function formatRealConclusionTimeHMS(
+  virtualRemainingMs,
+  speedFactor = 6,
+  nowWallMs = Date.now(),
+) {
+  const safeSpeed = Number.isFinite(speedFactor) && speedFactor > 0 ? speedFactor : 6;
+  const remainingRealMs = Math.max(0, ((Number(virtualRemainingMs) || 0) * 6) / safeSpeed);
+  const endDate = new Date(nowWallMs + remainingRealMs);
+  const hours = String(endDate.getHours()).padStart(2, '0');
+  const minutes = String(endDate.getMinutes()).padStart(2, '0');
+  const seconds = String(endDate.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
  * Formats fractional in-game hour (0..24) into HH:MM clock text.
  *
  * @param {number} hourOfDay - Hour within [0, 24).

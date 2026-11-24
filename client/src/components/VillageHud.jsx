@@ -8,7 +8,7 @@ import {
   UNITS,
   getTaskPhase,
 } from '@obelisk/shared';
-import { formatGameDurationHMS } from '../utils/timeFormat.js';
+import { formatRealConclusionTimeHMS, formatRealDurationHMS } from '../utils/timeFormat.js';
 
 const PHASE_BADGE_STYLES = {
   going: 'bg-sky-500/20 text-sky-300',
@@ -149,98 +149,103 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding }) {
  * @returns {import('react').JSX.Element}
  */
 export function VillageSidebarPanels({ village }) {
-  const { state, freeUnits, removeResource } = village;
+  const { state, freeUnits, removeResource, effectiveSpeedFactor } = village;
+  const activeSpeed = effectiveSpeedFactor ?? state.speedFactor ?? 6;
   const [discardAmounts, setDiscardAmounts] = useState({});
 
   const inventoryItems = Object.entries(state.inventory).filter(([, qty]) => qty > 0);
 
   return (
     <div className="flex flex-col gap-3 text-xs">
-      {/* 1. Active Timers */}
+      {/* 1. Active Timers (fixed scrollable viewport) */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/75 p-3">
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-300">
           Active Timers ({state.tasks.length})
         </h3>
-        {state.tasks.length === 0 ? (
-          <p className="text-[11px] text-slate-500">
-            Right-click any explored Territory tile to send units or build.
-          </p>
-        ) : (
-          <ul className="space-y-1.5 font-mono text-[11px]">
-            {state.tasks.map((t) => {
-              const phaseInfo = getTaskPhase(t, state.virtualTimeMs);
-              const markerKey =
-                t.kind === 'unit_action'
-                  ? (t.teamType ?? 'gatherer')
-                  : t.kind === 'build' || t.kind === 'upgrade' || t.kind === 'upgrade_main'
-                    ? 'builder'
-                    : null;
+        <div className="h-44 overflow-y-auto pr-1">
+          {state.tasks.length === 0 ? (
+            <p className="text-[11px] text-slate-500">
+              Right-click any explored Territory tile to send units or build.
+            </p>
+          ) : (
+            <ul className="space-y-1.5 font-mono text-[11px]">
+              {state.tasks.map((t) => {
+                const phaseInfo = getTaskPhase(t, state.virtualTimeMs);
+                const markerKey =
+                  t.kind === 'unit_action'
+                    ? (t.teamType ?? 'gatherer')
+                    : t.kind === 'build' || t.kind === 'upgrade' || t.kind === 'upgrade_main'
+                      ? 'builder'
+                      : null;
 
-              const teamTag =
-                t.kind === 'unit_action'
-                  ? [
-                      t.units?.gatherer ? `${t.units.gatherer}G` : '',
-                      t.units?.hunter ? `${t.units.hunter}H` : '',
-                    ]
-                      .filter(Boolean)
-                      .join('+') || UNITS[t.unitId]?.name
-                  : '';
+                const teamTag =
+                  t.kind === 'unit_action'
+                    ? [
+                        t.units?.gatherer ? `${t.units.gatherer}G` : '',
+                        t.units?.hunter ? `${t.units.hunter}H` : '',
+                      ]
+                        .filter(Boolean)
+                        .join('+') || UNITS[t.unitId]?.name
+                    : '';
 
-              const coordsLabel =
-                typeof t.x === 'number' && typeof t.y === 'number'
-                  ? `(${t.x}, ${t.y})`
-                  : 'Main Hall';
+                const coordsLabel =
+                  typeof t.x === 'number' && typeof t.y === 'number'
+                    ? `(${t.x}, ${t.y})`
+                    : 'Main Hall';
 
-              const rightLabel =
-                t.kind === 'unit_action'
-                  ? `Team (${teamTag})`
-                  : t.kind === 'build'
-                    ? `Build ${BUILDINGS[t.buildingId].name}`
-                    : t.kind === 'upgrade_main'
-                      ? `Main -> Tier ${t.targetTier}`
-                      : t.kind === 'upgrade'
-                        ? `Upgrade ${BUILDINGS[t.buildingId].name}`
-                        : t.kind === 'research'
-                          ? `Research ${TECHNOLOGIES[t.techId].name}`
-                          : `Craft ${RECIPES[t.recipeId].name}`;
+                const rightLabel =
+                  t.kind === 'unit_action'
+                    ? `Team (${teamTag})`
+                    : t.kind === 'build'
+                      ? `Build ${BUILDINGS[t.buildingId].name}`
+                      : t.kind === 'upgrade_main'
+                        ? `Main -> Tier ${t.targetTier}`
+                        : t.kind === 'upgrade'
+                          ? `Upgrade ${BUILDINGS[t.buildingId].name}`
+                          : t.kind === 'research'
+                            ? `Research ${TECHNOLOGIES[t.techId].name}`
+                            : `Craft ${RECIPES[t.recipeId].name}`;
 
-              return (
-                <li
-                  key={t.id}
-                  className="flex flex-col gap-1 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2"
-                >
-                  <div className="flex items-center justify-between gap-2 text-slate-200">
-                    <span className="shrink-0 font-semibold text-amber-300">{coordsLabel}</span>
-                    <span className="flex items-center gap-1.5 truncate font-semibold">
-                      {markerKey && (
-                        <span
-                          className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-                            TEAM_MARKER_STYLES[markerKey] ?? 'bg-slate-400'
-                          }`}
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span className="truncate">{rightLabel}</span>
-                    </span>
-                  </div>
+                return (
+                  <li
+                    key={t.id}
+                    className="flex flex-col gap-1 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-slate-200">
+                      <span className="shrink-0 font-semibold text-amber-300">{coordsLabel}</span>
+                      <span className="flex items-center gap-1.5 truncate font-semibold">
+                        {markerKey && (
+                          <span
+                            className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                              TEAM_MARKER_STYLES[markerKey] ?? 'bg-slate-400'
+                            }`}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="truncate">{rightLabel}</span>
+                      </span>
+                    </div>
 
-                  <div className="flex items-center justify-between gap-2 text-[10px]">
-                    <span className="text-slate-400">
-                      Conclusion: {formatGameDurationHMS(phaseInfo.totalRemainingMs)}
-                    </span>
-                    <span
-                      className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${
-                        PHASE_BADGE_STYLES[phaseInfo.phase]
-                      }`}
-                    >
-                      {phaseInfo.phaseLabel} {formatGameDurationHMS(phaseInfo.phaseRemainingMs)}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="text-slate-400">
+                        Conclusion:{' '}
+                        {formatRealConclusionTimeHMS(phaseInfo.totalRemainingMs, activeSpeed)}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${
+                          PHASE_BADGE_STYLES[phaseInfo.phase]
+                        }`}
+                      >
+                        {phaseInfo.phaseLabel}{' '}
+                        {formatRealDurationHMS(phaseInfo.phaseRemainingMs, activeSpeed)}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </section>
 
       {/* 2. Units */}
@@ -263,15 +268,16 @@ export function VillageSidebarPanels({ village }) {
         </div>
       </section>
 
-      {/* 3. Stockpile */}
+      {/* 3. Stockpile (fixed scrollable viewport) */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/75 p-3">
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-300">
           Stockpile ({inventoryItems.length} types)
         </h3>
-        {inventoryItems.length === 0 ? (
-          <p className="text-[11px] text-slate-500">Storage empty.</p>
-        ) : (
-          <ul className="space-y-1.5 font-mono text-[11px]">
+        <div className="h-52 overflow-y-auto pr-1">
+          {inventoryItems.length === 0 ? (
+            <p className="text-[11px] text-slate-500">Storage empty.</p>
+          ) : (
+            <ul className="space-y-1.5 font-mono text-[11px]">
             {inventoryItems.map(([id, qty]) => {
               const res = RESOURCES[id];
               const rawAmt = discardAmounts[id] ?? 1;
@@ -328,8 +334,9 @@ export function VillageSidebarPanels({ village }) {
                 </li>
               );
             })}
-          </ul>
-        )}
+            </ul>
+          )}
+        </div>
       </section>
 
       {/* 4. Unlocked Technologies */}

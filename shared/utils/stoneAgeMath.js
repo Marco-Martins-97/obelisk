@@ -569,6 +569,77 @@ export function advanceStarvationState({
 }
 
 /**
+ * Calculates total village water bowl storage across all active buildings (Main scales +10/lv).
+ *
+ * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.
+ * @returns {number} Total water bowl storage capacity.
+ */
+export function calculateWaterCapacity(buildings) {
+  let total = 0;
+
+  for (const instance of buildings ?? []) {
+    // Buildings under construction do not expand village water reserves yet.
+    if (instance.status && instance.status !== 'active') continue;
+    const def = BUILDINGS[instance.buildingId];
+    if (!def || def.waterCapacity <= 0) continue;
+    const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
+    total += def.waterCapacity * level;
+  }
+
+  return total;
+}
+
+/**
+ * Distributes famine population losses across unit types rather than exhausting
+ * a single unit type first. Trims from unit types with `count > 1` (highest count
+ * first, tie-breaking `hunter` -> `gatherer` -> `builder`) before removing any
+ * role's last surviving unit (`builder` -> `hunter` -> `gatherer`).
+ *
+ * @param {Record<string, number>} units - Current unit counts keyed by unitId.
+ * @param {number} excessPopToTrim - Population slots above `effectiveMaxPop` to trim.
+ * @returns {{
+ *   units: Record<string, number>,
+ *   trimmedTotal: number,
+ *   trimmedByUnit: Record<string, number>,
+ * }} Post-trim unit counts and casualty summary.
+ */
+export function trimUnitsBalanced(units = {}, excessPopToTrim = 0) {
+  const nextUnits = { ...units };
+  const trimmedByUnit = {};
+  let trimmedTotal = 0;
+  let remaining = Math.max(0, Math.floor(excessPopToTrim));
+
+  const surplusTieOrder = ['hunter', 'gatherer', 'builder'];
+  const lastUnitOrder = ['builder', 'hunter', 'gatherer'];
+
+  while (remaining > 0) {
+    let picked = null;
+    let bestCount = 1;
+
+    for (const unitId of surplusTieOrder) {
+      const count = nextUnits[unitId] ?? 0;
+      if (count > bestCount) {
+        bestCount = count;
+        picked = unitId;
+      }
+    }
+
+    if (!picked) {
+      picked = lastUnitOrder.find((unitId) => (nextUnits[unitId] ?? 0) > 0) ?? null;
+    }
+
+    if (!picked) break;
+
+    nextUnits[picked] -= 1;
+    trimmedByUnit[picked] = (trimmedByUnit[picked] ?? 0) + 1;
+    trimmedTotal += 1;
+    remaining = Math.max(0, remaining - (UNITS[picked]?.popCost ?? 1));
+  }
+
+  return { units: nextUnits, trimmedTotal, trimmedByUnit };
+}
+
+/**
  * Calculates total maximum village population from active Main + House buildings.
  *
  * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.

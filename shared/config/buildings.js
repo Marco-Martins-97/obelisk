@@ -116,7 +116,7 @@ export const BUILDINGS = Object.freeze({
     workersRequired: 0,
     buildersRequired: 1,
     buildTimeHours: 2.5,
-    cost: { sticks: 6, small_stones: 5, pelts: 4 },
+    cost: { sticks: 8, pelts: 5, straw: 5 },
     tierUpgrades: {
       2: {
         targetAge: 'copper',
@@ -130,7 +130,8 @@ export const BUILDINGS = Object.freeze({
     popBonusPerLevel: 10,
     waterCapacity: 10,
     trainsUnits: ['gatherer', 'hunter', 'builder'],
-    description: 'Central village Age controller holding starter supplies, water jar, and unit training.',
+    description:
+      'Central village Age controller scaling storage (+250/lv), housing (+10/lv), water (+10 bowls/lv), and unit training.',
   }),
   firepit: createBuilding({
     id: 'firepit',

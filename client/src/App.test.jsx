@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { MemoryRouter } from 'react-router';
+import { REAL_MS_PER_INGAME_HOUR } from '@obelisk/shared';
 import { AppRoutes } from './App.jsx';
+import { formatRealConclusionTimeHMS, formatRealDurationHMS } from './utils/timeFormat.js';
 
 describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action Menu', () => {
   beforeEach(() => {
@@ -55,9 +57,19 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
       </MemoryRouter>,
     );
 
-    const onlineLink = screen.getByRole('link', { name: 'Online' });
+    const offlineLink = screen.getByRole('link', { name: 'Offline' });
     const sandboxLink = screen.getByRole('link', { name: 'Sandbox' });
-    expect(onlineLink).toHaveAttribute('aria-current', 'page');
+    expect(offlineLink).toHaveAttribute('aria-current', 'page');
+
+    // Offline locks speed at 6x without a speed selector dropdown.
+    expect(screen.queryByLabelText('Game Speed')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Fixed Game Speed')).toHaveTextContent('Speed 6x');
+
+    // How-to-Play button opens and closes the Stone Age quick guide dialog.
+    fireEvent.click(screen.getByRole('button', { name: 'How to Play' }));
+    expect(screen.getByRole('heading', { name: /How to Play/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('heading', { name: /How to Play/i })).not.toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: 'Dev' })).not.toBeInTheDocument();
     expect(screen.getByText('60/250')).toBeInTheDocument();
@@ -108,13 +120,21 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(seedInput.value).not.toBe(initialValue);
   });
 
-  it('supports 3600x speed, discarding X resources, [Gather - 1 +]/[Hunt - 1 +]/[Team >], and Build colors', () => {
+  it('supports Sandbox 3600x speed, discarding X resources, [Gather - 1 +]/[Hunt - 1 +]/[Team >], Build colors, and real-time timers', () => {
+    // 12 in-game mins = 2 real mins at 6x; 10:00:00 + 2m15s -> Conclusion 10:02:15.
+    const twelveInGameMinsMs = (12 / 60) * REAL_MS_PER_INGAME_HOUR;
+    expect(formatRealDurationHMS(twelveInGameMinsMs, 6)).toBe('00:02:00');
+    const wall10am = new Date(2026, 0, 1, 10, 0, 0).getTime();
+    expect(formatRealConclusionTimeHMS(135_000, 6, wall10am)).toBe('10:02:15');
+
     render(
       <MemoryRouter initialEntries={['/']}>
         <AppRoutes />
       </MemoryRouter>,
     );
 
+    // Switch to Sandbox to test custom speed controls.
+    fireEvent.click(screen.getByRole('link', { name: 'Sandbox' }));
     const speedSelect = screen.getByLabelText('Game Speed');
     fireEvent.change(speedSelect, { target: { value: '3600' } });
     expect(speedSelect.value).toBe('3600');

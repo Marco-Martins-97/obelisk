@@ -173,15 +173,21 @@ export default function BuildingModal({
           </div>
 
           <p className="mt-3 text-xs text-slate-300">{def.description}</p>
-          {(def.storageBonusPerLevel > 0 || def.popBonusPerLevel > 0) && (
+          {(def.storageBonusPerLevel > 0 || def.popBonusPerLevel > 0 || def.waterCapacity > 0) && (
             <p className="mt-1 font-mono text-[11px] text-emerald-300">
-              {def.storageBonusPerLevel > 0
-                ? `Pooled Storage Bonus: +${def.storageBonusPerLevel * building.level} bulk`
-                : ''}
-              {def.storageBonusPerLevel > 0 && def.popBonusPerLevel > 0 ? ' · ' : ''}
-              {def.popBonusPerLevel > 0
-                ? `Housing Bonus: +${def.popBonusPerLevel * building.level} max pop`
-                : ''}
+              {[
+                def.storageBonusPerLevel > 0
+                  ? `Pooled Storage Bonus: +${def.storageBonusPerLevel * building.level} bulk`
+                  : null,
+                def.popBonusPerLevel > 0
+                  ? `Housing Bonus: +${def.popBonusPerLevel * building.level} max pop`
+                  : null,
+                def.waterCapacity > 0
+                  ? `Water Storage Bonus: +${def.waterCapacity * building.level} bowls`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           )}
 
