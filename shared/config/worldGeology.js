@@ -23,6 +23,7 @@ export const ORES = {
   silver: { id: 'silver', name: 'Silver', rarity: 'rare', veinRadiusScale: 0.085, color: '#cbd5e1' },
   gold: { id: 'gold', name: 'Gold', rarity: 'rare', veinRadiusScale: 0.08, color: '#facc15' },
   gems: { id: 'gems', name: 'Gems', rarity: 'very_rare', veinRadiusScale: 0.055, color: '#a855f7' },
+  salt: { id: 'salt', name: 'Rock Salt', rarity: 'common', veinRadiusScale: 0.21, color: '#f8fafc' },
 };
 
 /**
@@ -33,13 +34,13 @@ export const ROCK_TYPES = [
   {
     id: 'limestone',
     name: 'Limestone',
-    ores: ['flux', 'copper'],
+    ores: ['flux', 'copper', 'salt'],
     color: '#d6d3c9',
   },
   {
     id: 'shale',
     name: 'Shale',
-    ores: ['coal', 'iron'],
+    ores: ['coal', 'iron', 'salt'],
     color: '#6b7280',
   },
   {

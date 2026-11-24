@@ -10,17 +10,22 @@ import {
   STARTER_VILLAGE_POOLS,
   TECHNOLOGIES,
   UNITS,
+  advanceStarvationState,
+  applyDailySpoilage,
   calculateBuildTimestamps,
-  calculateDailySurvival,
   calculateMaxPopulation,
   calculatePopUsed,
+  calculateStorageCapacity,
   calculateStorageUsed,
   calculateTeamActionTimestamps,
+  calculateTotalStoredFood,
   canBuildOrUpgradeBuilding,
+  consumeStoredFoodFEFO,
   createInitialTerritoryFog,
   createPrng,
   getCalendarState,
   getMainTierChangeRule,
+  getStarvationStageInfo,
   hashCoords,
   isTechTriggerSatisfied,
   resolveTeamActionYield,
@@ -155,8 +160,13 @@ function createInitialState({ sessionKey, seed, spawnTile, continentSize, territ
     lastSurvivalDay: 0,
     nextSeq: 1,
     inventory: { ...STARTER_INVENTORY },
-    food: STARTER_VILLAGE_POOLS.food,
+    foodCarry: 0,
+    spoilageCarry: {},
     water: STARTER_VILLAGE_POOLS.water,
+    starvationDays: 0,
+    efficiencyPenalty: 0,
+    starvationPopLoss: 0,
+    isAbandoned: false,
     units: { gatherer: 0, hunter: 0, builder: 0 },
     unlockedTechs: [...STARTER_UNLOCKED_TECHS],
     craftedCounts: {},
@@ -191,9 +201,19 @@ function createInitialState({ sessionKey, seed, spawnTile, continentSize, territ
  * @returns {object} Resolved state snapshot.
  */
 function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile) {
+  if (prev.isAbandoned) {
+    return prev;
+  }
+
   let inventory = { ...prev.inventory };
-  let food = prev.food;
+  let foodCarry = prev.foodCarry ?? 0;
+  let spoilageCarry = { ...(prev.spoilageCarry ?? {}) };
   let water = prev.water;
+  let units = { ...prev.units };
+  let starvationDays = prev.starvationDays ?? 0;
+  let efficiencyPenalty = prev.efficiencyPenalty ?? 0;
+  let starvationPopLoss = prev.starvationPopLoss ?? 0;
+  let isAbandoned = false;
   const craftedCounts = { ...prev.craftedCounts };
   const unlockedTechs = [...prev.unlockedTechs];
   let buildings = prev.buildings.map((b) => ({ ...b }));
@@ -202,8 +222,6 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
   let nextSeq = prev.nextSeq;
   const newLogs = [];
 
-  const mainBld = buildings.find((b) => b.buildingId === 'main');
-  const maxStorage = (mainBld?.level ?? 1) * BUILDINGS.main.storageBonusPerLevel;
   const maxWater = BUILDINGS.main.waterCapacity;
 
   // 1. Resolve in-progress tasks chronologically.
@@ -302,6 +320,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
     if (task.kind === 'craft' && !task.resolvedCraft && nextVirtualTimeMs >= task.completedAtMs) {
       task.resolvedCraft = true;
       const recipe = RECIPES[task.recipeId];
+      const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
       const added = addItemsWithinCapacity(inventory, recipe.outputs, maxStorage);
       inventory = added.inventory;
 
@@ -333,6 +352,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
         tile,
         availableOres: territory.availableOres,
         unlockedTechs,
+        efficiencyPenalty,
         rng,
       });
 
@@ -350,6 +370,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
         logParts.push(`+${outcome.waterBowls} water bowls (${water}/${maxWater})`);
       }
       if (Object.keys(outcome.items).length > 0) {
+        const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
         const added = addItemsWithinCapacity(inventory, outcome.items, maxStorage);
         inventory = added.inventory;
         const summary = Object.entries(outcome.items)
@@ -384,33 +405,103 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
     }
   }
 
-  // 2. Apply daily survival tick once per completed in-game day based on active popUsed.
+  // 2. Apply daily FEFO auto-feeding, water consumption, fractional spoilage (S1),
+  //    and 5-stage starvation/recovery day by day so multi-day catchups resolve cleanly.
   const currentDay = Math.floor(nextVirtualTimeMs / REAL_MS_PER_INGAME_DAY);
   let lastSurvivalDay = prev.lastSurvivalDay;
   if (currentDay > lastSurvivalDay) {
     const elapsedDays = currentDay - lastSurvivalDay;
-    const popUsed = calculatePopUsed({ units: prev.units, buildings });
 
-    if (popUsed > 0) {
-      // Auto-consume edible cooked/foraged items from inventory if raw food pool is short.
-      const totalNeeded = popUsed * elapsedDays;
-      const ediblePriority = ['cooked_meat', 'cooked_fish', 'berries', 'grain'];
-      for (const edibleId of ediblePriority) {
-        while (food < totalNeeded && (inventory[edibleId] ?? 0) > 0) {
-          inventory[edibleId] -= 1;
-          food += RESOURCES[edibleId].foodValue;
-        }
+    for (let dayOffset = 0; dayOffset < elapsedDays; dayOffset += 1) {
+      if (isAbandoned) break;
+
+      const buildingMaxPop = calculateMaxPopulation(buildings);
+      const popUsed = calculatePopUsed({ units, buildings });
+
+      let hasDeficit = false;
+      let foodDeficit = 0;
+      let waterDeficit = 0;
+
+      if (popUsed > 0) {
+        const feed = consumeStoredFoodFEFO({
+          inventory,
+          foodCarry,
+          foodNeeded: popUsed,
+        });
+        inventory = feed.inventory;
+        foodCarry = feed.foodCarry;
+        foodDeficit = feed.foodDeficit;
+
+        waterDeficit = Math.max(0, popUsed - water);
+        water = Math.max(0, water - popUsed);
+        hasDeficit = feed.isStarving || waterDeficit > 0;
       }
 
-      const survival = calculateDailySurvival({ popUsed, food, water, elapsedDays });
-      food = survival.foodRemaining;
-      water = survival.waterRemaining;
-      if (survival.isStarving || survival.isDehydrated) {
+      const spoilStep = applyDailySpoilage({
+        inventory,
+        spoilageCarry,
+        elapsedDays: 1,
+        buildings,
+      });
+      inventory = spoilStep.inventory;
+      spoilageCarry = spoilStep.spoilageCarry;
+      const spoiledEntries = Object.entries(spoilStep.spoiled);
+      if (spoiledEntries.length > 0) {
+        const spoiledText = spoiledEntries
+          .map(([id, qty]) => `${qty} ${RESOURCES[id]?.name ?? id}`)
+          .join(', ');
+        newLogs.push(`Spoiled overnight: ${spoiledText}.`);
+      }
+
+      const wasAfflicted = efficiencyPenalty > 0 || starvationPopLoss > 0;
+      const starvStep = advanceStarvationState({
+        starvationDays,
+        efficiencyPenalty,
+        starvationPopLoss,
+        isAbandoned,
+        hasDeficit,
+        buildingMaxPop,
+        elapsedDays: 1,
+      });
+      starvationDays = starvStep.starvationDays;
+      efficiencyPenalty = starvStep.efficiencyPenalty;
+      starvationPopLoss = starvStep.starvationPopLoss;
+      isAbandoned = starvStep.isAbandoned;
+
+      if (hasDeficit) {
+        const missing = `${foodDeficit > 0 ? 'Food' : ''}${foodDeficit > 0 && waterDeficit > 0 ? ' & ' : ''}${waterDeficit > 0 ? 'Water' : ''}`;
         newLogs.push(
-          `Daily ration shortage (${survival.isStarving ? 'Food' : ''}${survival.isStarving && survival.isDehydrated ? ' & ' : ''}${survival.isDehydrated ? 'Water' : ''})!`,
+          `${missing} shortage — ${starvStep.stage.label} (-${Math.round(efficiencyPenalty * 100)}% eff${starvationPopLoss > 0 ? `, -${starvationPopLoss} max pop` : ''}).`,
+        );
+      } else if (wasAfflicted) {
+        newLogs.push(
+          efficiencyPenalty === 0 && starvationPopLoss === 0
+            ? 'Village fully fed and recovered to Healthy!'
+            : `Village fed — recovering (${starvStep.stage.label}, -${Math.round(efficiencyPenalty * 100)}% eff).`,
         );
       }
+
+      if (isAbandoned) {
+        newLogs.push('Max population fell to 0 — your village has become abandoned!');
+        break;
+      }
+
+      let curPopUsed = calculatePopUsed({ units, buildings });
+      if (curPopUsed > starvStep.effectiveMaxPop) {
+        let trimmed = 0;
+        for (const uId of ['gatherer', 'hunter', 'builder']) {
+          while (curPopUsed > starvStep.effectiveMaxPop && (units[uId] ?? 0) > 0) {
+            units[uId] -= 1;
+            curPopUsed -= UNITS[uId].popCost;
+            trimmed += 1;
+          }
+        }
+        if (trimmed > 0) {
+          newLogs.push(`Lost ${trimmed} villager(s) due to famine population decline.`);
+        }
+      }
     }
+
     lastSurvivalDay = currentDay;
   }
 
@@ -418,16 +509,22 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile)
 
   return {
     ...prev,
-    virtualTimeMs: nextVirtualTimeMs,
+    virtualTimeMs: isAbandoned ? nextVirtualTimeMs : nextVirtualTimeMs,
     lastSurvivalDay,
     nextSeq,
     inventory,
-    food,
+    foodCarry,
+    spoilageCarry,
     water,
+    units,
+    starvationDays,
+    efficiencyPenalty,
+    starvationPopLoss,
+    isAbandoned,
     unlockedTechs,
     craftedCounts,
     buildings,
-    tasks: nextTasks,
+    tasks: isAbandoned ? [] : nextTasks,
     territoryFog: Array.from(territoryFog),
     continentFog: Array.from(continentFog),
     logs: combinedLogs,
@@ -456,7 +553,16 @@ function loadSavedOrFreshState(storageKey, worldParams) {
         Array.isArray(parsed.territoryFog) &&
         parsed.territoryFog.length === worldParams.territorySize * worldParams.territorySize
       ) {
-        return { ...parsed, sessionKey: worldParams.sessionKey };
+        return {
+          ...parsed,
+          foodCarry: parsed.foodCarry ?? 0,
+          spoilageCarry: parsed.spoilageCarry ?? {},
+          starvationDays: parsed.starvationDays ?? 0,
+          efficiencyPenalty: parsed.efficiencyPenalty ?? 0,
+          starvationPopLoss: parsed.starvationPopLoss ?? 0,
+          isAbandoned: Boolean(parsed.isAbandoned),
+          sessionKey: worldParams.sessionKey,
+        };
       }
     }
   } catch {
@@ -555,11 +661,23 @@ export function useStoneAgeVillage({
   const continentFogMask = useMemo(() => new Uint8Array(state.continentFog), [state.continentFog]);
 
   const mainBuilding = state.buildings.find((b) => b.buildingId === 'main') ?? state.buildings[0];
-  const storageCapacity = (mainBuilding?.level ?? 1) * BUILDINGS.main.storageBonusPerLevel;
+  const storageProfile = calculateStorageCapacity(state.buildings);
+  const storageCapacity = storageProfile.totalCapacity;
+  const preservedFoodCapacity = storageProfile.preservedFoodCapacity;
   const storageUsed = calculateStorageUsed(state.inventory);
+  const storedFood = calculateTotalStoredFood(state.inventory, state.foodCarry ?? 0);
   const waterCapacity = BUILDINGS.main.waterCapacity;
-  const maxPop = calculateMaxPopulation(state.buildings);
+  const buildingMaxPop = calculateMaxPopulation(state.buildings);
+  const maxPop = state.isAbandoned
+    ? 0
+    : Math.max(0, buildingMaxPop - (state.starvationPopLoss ?? 0));
   const popUsed = calculatePopUsed({ units: state.units, buildings: state.buildings });
+  const starvationStage = getStarvationStageInfo({
+    starvationDays: state.starvationDays ?? 0,
+    efficiencyPenalty: state.efficiencyPenalty ?? 0,
+    starvationPopLoss: state.starvationPopLoss ?? 0,
+    isAbandoned: Boolean(state.isAbandoned),
+  });
 
   const busyUnits = useMemo(() => {
     const busy = { gatherer: 0, hunter: 0, builder: 0 };
@@ -601,9 +719,13 @@ export function useStoneAgeVillage({
   const trainUnit = useCallback(
     (unitId) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const unitDef = UNITS[unitId];
         if (!unitDef) return prev;
-        const curMaxPop = calculateMaxPopulation(prev.buildings);
+        const curMaxPop = Math.max(
+          0,
+          calculateMaxPopulation(prev.buildings) - (prev.starvationPopLoss ?? 0),
+        );
         const curPopUsed = calculatePopUsed({ units: prev.units, buildings: prev.buildings });
         if (curPopUsed + unitDef.popCost > curMaxPop) return prev;
         if (!hasEnoughResources(prev.inventory, unitDef.trainingCost)) return prev;
@@ -622,28 +744,10 @@ export function useStoneAgeVillage({
     [updateSessionState],
   );
 
-  const consumeEdibleFood = useCallback(
-    (resourceId) => {
-      updateSessionState((prev) => {
-        const res = RESOURCES[resourceId];
-        if (!res?.edible || (prev.inventory[resourceId] ?? 0) <= 0) return prev;
-        return {
-          ...prev,
-          inventory: {
-            ...prev.inventory,
-            [resourceId]: prev.inventory[resourceId] - 1,
-          },
-          food: prev.food + res.foodValue,
-          logs: [`Ate 1 ${res.name} (+${res.foodValue} food).`, ...prev.logs].slice(0, 24),
-        };
-      });
-    },
-    [updateSessionState],
-  );
-
   const removeResource = useCallback(
     (resourceId, amount = 1) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const res = RESOURCES[resourceId];
         const qtyToRemove = Math.floor(Number(amount));
         const available = prev.inventory[resourceId] ?? 0;
@@ -673,6 +777,7 @@ export function useStoneAgeVillage({
   const dispatchTileAction = useCallback(
     ({ action, x, y, units }) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         if (prev.territoryFog[y * prev.territorySize + x] !== 1) return prev;
         const tile = territory.tiles[y * prev.territorySize + x];
         if (action === 'collect_water' && !tile?.isWater) return prev;
@@ -749,6 +854,7 @@ export function useStoneAgeVillage({
           units: committedUnits,
           unlockedTechs: prev.unlockedTechs,
           nowMs: prev.virtualTimeMs,
+          efficiencyPenalty: prev.efficiencyPenalty ?? 0,
         });
 
         const task = {
@@ -797,6 +903,9 @@ export function useStoneAgeVillage({
       return Object.values(BUILDINGS)
         .filter((def) => def.buildable)
         .map((def) => {
+          if (state.isAbandoned) {
+            return { building: def, status: 'red', reason: 'Village is abandoned.' };
+          }
           if (!isExplored) {
             return { building: def, status: 'red', reason: 'Tile is unexplored.' };
           }
@@ -846,6 +955,7 @@ export function useStoneAgeVillage({
       state.buildings,
       state.unlockedTechs,
       state.inventory,
+      state.isAbandoned,
       mainBuilding,
       freeUnits.builder,
       popUsed,
@@ -856,6 +966,7 @@ export function useStoneAgeVillage({
   const startBuildBuilding = useCallback(
     ({ buildingId, x, y }) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const def = BUILDINGS[buildingId];
         if (!def || !def.buildable) return prev;
         const idx = y * territory.size + x;
@@ -878,7 +989,10 @@ export function useStoneAgeVillage({
           .reduce((s, t) => s + (t.buildersUsed ?? 1), 0);
         if ((prev.units.builder ?? 0) - busyBuilders < def.buildersRequired) return prev;
 
-        const curMaxPop = calculateMaxPopulation(prev.buildings);
+        const curMaxPop = Math.max(
+          0,
+          calculateMaxPopulation(prev.buildings) - (prev.starvationPopLoss ?? 0),
+        );
         const curPopUsed = calculatePopUsed({ units: prev.units, buildings: prev.buildings });
         if (curPopUsed + def.workersRequired > curMaxPop) return prev;
         if (!hasEnoughResources(prev.inventory, def.cost)) return prev;
@@ -888,6 +1002,7 @@ export function useStoneAgeVillage({
           to: { x, y },
           buildingId,
           nowMs: prev.virtualTimeMs,
+          efficiencyPenalty: prev.efficiencyPenalty ?? 0,
         });
 
         const instanceId = `${buildingId}-${prev.nextSeq}`;
@@ -936,6 +1051,7 @@ export function useStoneAgeVillage({
   const startUpgradeBuilding = useCallback(
     (instanceId) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const target = prev.buildings.find((b) => b.instanceId === instanceId);
         if (!target || target.status !== 'active') return prev;
         const def = BUILDINGS[target.buildingId];
@@ -967,6 +1083,7 @@ export function useStoneAgeVillage({
           to: { x: target.x, y: target.y },
           buildingId: target.buildingId,
           nowMs: prev.virtualTimeMs,
+          efficiencyPenalty: prev.efficiencyPenalty ?? 0,
         });
 
         const task = {
@@ -1005,6 +1122,7 @@ export function useStoneAgeVillage({
   const changeMainTier = useCallback(
     (targetTier) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const main = prev.buildings.find((b) => b.buildingId === 'main');
         if (!main || main.status !== 'active') return prev;
         const rule = getMainTierChangeRule({
@@ -1030,7 +1148,8 @@ export function useStoneAgeVillage({
           .reduce((s, t) => s + (t.buildersUsed ?? 1), 0);
         if ((prev.units.builder ?? 0) - busyBuilders < rule.buildersRequired) return prev;
 
-        const buildMs = Math.round(rule.buildTimeHours * REAL_MS_PER_INGAME_HOUR);
+        const efficiencyMult = Math.max(0.2, 1 - (prev.efficiencyPenalty ?? 0));
+        const buildMs = Math.round((rule.buildTimeHours / efficiencyMult) * REAL_MS_PER_INGAME_HOUR);
         const completedAtMs = prev.virtualTimeMs + buildMs;
 
         return {
@@ -1068,19 +1187,25 @@ export function useStoneAgeVillage({
   const startCraftRecipe = useCallback(
     ({ buildingInstanceId, recipeId }) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const building = prev.buildings.find((b) => b.instanceId === buildingInstanceId);
         const recipe = RECIPES[recipeId];
         if (!building || building.status !== 'active' || !recipe) return prev;
         if (building.buildingId !== recipe.buildingId) return prev;
+        const waterCost = recipe.waterCostBowls ?? 0;
+        if ((prev.water ?? 0) < waterCost) return prev;
         if (!hasEnoughResources(prev.inventory, recipe.inputs)) return prev;
 
+        const efficiencyMult = Math.max(0.2, 1 - (prev.efficiencyPenalty ?? 0));
         const completedAtMs =
-          prev.virtualTimeMs + Math.round(recipe.craftTimeHours * REAL_MS_PER_INGAME_HOUR);
+          prev.virtualTimeMs +
+          Math.round((recipe.craftTimeHours / efficiencyMult) * REAL_MS_PER_INGAME_HOUR);
 
         return {
           ...prev,
           nextSeq: prev.nextSeq + 1,
           inventory: spendResources(prev.inventory, recipe.inputs),
+          water: prev.water - waterCost,
           tasks: [
             ...prev.tasks,
             {
@@ -1103,6 +1228,7 @@ export function useStoneAgeVillage({
   const startResearchTech = useCallback(
     ({ buildingInstanceId, techId }) => {
       updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
         const building = prev.buildings.find((b) => b.instanceId === buildingInstanceId);
         const tech = TECHNOLOGIES[techId];
         if (!building || building.status !== 'active' || !tech) return prev;
@@ -1113,8 +1239,10 @@ export function useStoneAgeVillage({
         }
         if (!hasEnoughResources(prev.inventory, tech.cost)) return prev;
 
+        const efficiencyMult = Math.max(0.2, 1 - (prev.efficiencyPenalty ?? 0));
         const completedAtMs =
-          prev.virtualTimeMs + Math.round(tech.researchTimeHours * REAL_MS_PER_INGAME_HOUR);
+          prev.virtualTimeMs +
+          Math.round((tech.researchTimeHours / efficiencyMult) * REAL_MS_PER_INGAME_HOUR);
 
         return {
           ...prev,
@@ -1147,15 +1275,18 @@ export function useStoneAgeVillage({
     mainBuilding,
     storageUsed,
     storageCapacity,
+    preservedFoodCapacity,
+    storedFood,
     waterCapacity,
+    buildingMaxPop,
     maxPop,
     popUsed,
+    starvationStage,
     busyUnits,
     freeUnits,
     setSpeedFactor,
     resetVillage,
     trainUnit,
-    consumeEdibleFood,
     removeResource,
     dispatchTileAction,
     evaluateBuildingOptions,

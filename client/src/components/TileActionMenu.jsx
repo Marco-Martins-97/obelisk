@@ -110,6 +110,7 @@ function UnitQuantityRow({
  * @param {Array<{ building: object, status: 'ready' | 'grey' | 'red', reason: string | null }>} props.buildingOptions
  * @param {{ gatherer: number, hunter: number, builder: number }} props.freeUnits
  * @param {boolean} props.isExplored
+ * @param {boolean} [props.isAbandoned=false]
  * @param {() => void} props.onClose
  * @param {(action: string, units: object) => void} props.onDispatchAction
  * @param {(buildingId: string) => void} props.onBuildBuilding
@@ -120,6 +121,7 @@ export default function TileActionMenu({
   buildingOptions,
   freeUnits,
   isExplored,
+  isAbandoned = false,
   onClose,
   onDispatchAction,
   onBuildBuilding,
@@ -207,7 +209,11 @@ export default function TileActionMenu({
         </button>
       </div>
 
-      {!isExplored ? (
+      {isAbandoned ? (
+        <p className="px-1 py-2 text-red-300">
+          Village Abandoned. Reset Village to dispatch teams or construct buildings.
+        </p>
+      ) : !isExplored ? (
         <p className="px-1 py-2 text-slate-400">
           Unexplored Fog tile. Send a team to an adjacent explored tile to reveal on return.
         </p>

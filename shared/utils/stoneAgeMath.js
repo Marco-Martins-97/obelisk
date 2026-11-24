@@ -201,6 +201,374 @@ export function calculateStorageUsed(inventory) {
 }
 
 /**
+ * Calculates pooled village storage capacity across all active buildings.
+ * Combines general capacity (Main + Warehouses) and preserved food capacity (future Granaries).
+ *
+ * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.
+ * @returns {{
+ *   generalCapacity: number,
+ *   preservedFoodCapacity: number,
+ *   totalCapacity: number,
+ *   preservedSpoilageMultiplier: number,
+ * }} Pooled storage capacities and preservation modifier.
+ */
+export function calculateStorageCapacity(buildings) {
+  let generalCapacity = 0;
+  let preservedFoodCapacity = 0;
+  let bestSpoilageMultiplier = 1;
+
+  for (const instance of buildings ?? []) {
+    if (instance.status && instance.status !== 'active') continue;
+    const def = BUILDINGS[instance.buildingId];
+    if (!def) continue;
+    const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
+
+    if (def.storageBonusPerLevel > 0) {
+      generalCapacity += def.storageBonusPerLevel * level;
+    }
+    if (def.preservedStorageBonusPerLevel > 0) {
+      preservedFoodCapacity += def.preservedStorageBonusPerLevel * level;
+      if (def.spoilageMultiplier < bestSpoilageMultiplier) {
+        bestSpoilageMultiplier = def.spoilageMultiplier;
+      }
+    }
+  }
+
+  return {
+    generalCapacity,
+    preservedFoodCapacity,
+    totalCapacity: generalCapacity + preservedFoodCapacity,
+    preservedSpoilageMultiplier: bestSpoilageMultiplier,
+  };
+}
+
+/**
+ * Calculates total available food nutrition across edible items in storage plus fractional carry.
+ *
+ * @param {Record<string, number> | Map<string, number>} inventory - Item counts by resourceId.
+ * @param {number} [foodCarry=0] - Leftover food fraction from multi-ration meals.
+ * @returns {number} Total edible food rations available.
+ */
+export function calculateTotalStoredFood(inventory, foodCarry = 0) {
+  const entries = inventory instanceof Map ? inventory.entries() : Object.entries(inventory ?? {});
+  let total = Math.max(0, Number(foodCarry) || 0);
+
+  for (const [resourceId, quantity] of entries) {
+    if (!quantity || quantity <= 0) continue;
+    const def = RESOURCES[resourceId];
+    if (def?.edible && def.foodValue > 0) {
+      total += quantity * def.foodValue;
+    }
+  }
+
+  return Math.round(total * 1000) / 1000;
+}
+
+/**
+ * Automatically feeds `foodNeeded` units from stored edible items using FEFO order
+ * (highest `spoilRatePerDay` eaten first; ties break toward lower `foodValue`).
+ * Multi-ration items (e.g., Cooked Meat = 3) retain leftover nutrition in `foodCarry`.
+ *
+ * @param {object} params
+ * @param {Record<string, number>} [params.inventory={}] - Source inventory map.
+ * @param {number} [params.foodCarry=0] - Existing fractional ration carry.
+ * @param {number} [params.foodNeeded=0] - Total daily food rations required.
+ * @returns {{
+ *   inventory: Record<string, number>,
+ *   foodCarry: number,
+ *   consumed: Record<string, number>,
+ *   foodDeficit: number,
+ *   isStarving: boolean,
+ * }} Updated inventory, leftover carry, consumed counts, and deficit status.
+ */
+export function consumeStoredFoodFEFO({ inventory = {}, foodCarry = 0, foodNeeded = 0 } = {}) {
+  if (foodNeeded < 0 || foodCarry < 0) {
+    throw new RangeError('foodNeeded and foodCarry must be non-negative.');
+  }
+
+  const nextInventory = { ...inventory };
+  let carry = Number(foodCarry) || 0;
+  let needed = Number(foodNeeded) || 0;
+  const consumed = {};
+
+  if (carry > 0 && needed > 0) {
+    const fromCarry = Math.min(carry, needed);
+    carry -= fromCarry;
+    needed -= fromCarry;
+  }
+
+  if (needed > 1e-9) {
+    const edibleItems = Object.entries(nextInventory)
+      .filter(([id, qty]) => qty > 0 && RESOURCES[id]?.edible && RESOURCES[id].foodValue > 0)
+      .map(([id]) => RESOURCES[id])
+      .sort(
+        (a, b) =>
+          b.spoilRatePerDay - a.spoilRatePerDay ||
+          a.foodValue - b.foodValue ||
+          a.id.localeCompare(b.id),
+      );
+
+    for (const item of edibleItems) {
+      if (needed <= 1e-9) break;
+      const availQty = nextInventory[item.id] ?? 0;
+      const unitsToConsume = Math.min(availQty, Math.ceil(needed / item.foodValue));
+      if (unitsToConsume <= 0) continue;
+
+      const remaining = availQty - unitsToConsume;
+      if (remaining <= 0) {
+        delete nextInventory[item.id];
+      } else {
+        nextInventory[item.id] = remaining;
+      }
+      consumed[item.id] = (consumed[item.id] ?? 0) + unitsToConsume;
+
+      const gained = unitsToConsume * item.foodValue;
+      if (gained >= needed) {
+        carry += gained - needed;
+        needed = 0;
+      } else {
+        needed -= gained;
+      }
+    }
+  }
+
+  const normalizedCarry = carry <= 1e-9 ? 0 : Math.round(carry * 1000) / 1000;
+  const foodDeficit = needed <= 1e-9 ? 0 : Math.round(needed * 1000) / 1000;
+
+  return {
+    inventory: nextInventory,
+    foodCarry: normalizedCarry,
+    consumed,
+    foodDeficit,
+    isStarving: foodDeficit > 0,
+  };
+}
+
+/**
+ * Applies fractional per-type daily food spoilage (`S1`), carrying partial losses across
+ * days in `spoilageCarry` so small stacks do not vanish prematurely yet still converge cleanly.
+ * Preserved storage slots (e.g., future Granaries) protect highest-spoil food stacks first.
+ *
+ * @param {object} params
+ * @param {Record<string, number>} [params.inventory={}] - Source inventory counts.
+ * @param {Record<string, number>} [params.spoilageCarry={}] - Fractional spoilage accumulators per resourceId.
+ * @param {number} [params.elapsedDays=1] - Whole in-game days elapsed.
+ * @param {Array<{ buildingId: string, level?: number, status?: string }>} [params.buildings=[]] - Placed buildings.
+ * @returns {{
+ *   inventory: Record<string, number>,
+ *   spoilageCarry: Record<string, number>,
+ *   spoiled: Record<string, number>,
+ * }} Post-spoilage inventory, updated carry map, and removed item counts.
+ */
+export function applyDailySpoilage({
+  inventory = {},
+  spoilageCarry = {},
+  elapsedDays = 1,
+  buildings = [],
+} = {}) {
+  if (!Number.isFinite(elapsedDays) || elapsedDays < 0) {
+    throw new RangeError('elapsedDays must be non-negative.');
+  }
+
+  const wholeDays = Math.floor(elapsedDays);
+  const nextInventory = { ...inventory };
+  const nextCarry = { ...spoilageCarry };
+  const spoiled = {};
+  if (wholeDays === 0) {
+    return { inventory: nextInventory, spoilageCarry: nextCarry, spoiled };
+  }
+
+  const { preservedFoodCapacity, preservedSpoilageMultiplier } = calculateStorageCapacity(buildings);
+
+  for (let day = 0; day < wholeDays; day += 1) {
+    let remainingPreservedBulk = preservedFoodCapacity;
+    const perishableItems = Object.entries(nextInventory)
+      .filter(([id, qty]) => qty > 0 && (RESOURCES[id]?.spoilRatePerDay ?? 0) > 0)
+      .map(([id]) => RESOURCES[id])
+      .sort((a, b) => b.spoilRatePerDay - a.spoilRatePerDay || a.id.localeCompare(b.id));
+
+    for (const def of perishableItems) {
+      const qty = nextInventory[def.id] ?? 0;
+      if (qty <= 0) continue;
+
+      // Fastest-spoiling items receive Granary/preserved capacity protection first.
+      const protectedCount =
+        remainingPreservedBulk > 0
+          ? Math.min(qty, Math.floor(remainingPreservedBulk / def.sizeClass))
+          : 0;
+      remainingPreservedBulk = Math.max(0, remainingPreservedBulk - protectedCount * def.sizeClass);
+      const unprotectedCount = qty - protectedCount;
+
+      const rawDailyLoss =
+        protectedCount * def.spoilRatePerDay * preservedSpoilageMultiplier +
+        unprotectedCount * def.spoilRatePerDay;
+      const accumulated = (nextCarry[def.id] ?? 0) + rawDailyLoss;
+      const lost = Math.min(qty, Math.floor(accumulated + 1e-9));
+
+      if (lost > 0) {
+        const remaining = qty - lost;
+        spoiled[def.id] = (spoiled[def.id] ?? 0) + lost;
+        if (remaining <= 0) {
+          delete nextInventory[def.id];
+          delete nextCarry[def.id];
+          continue;
+        }
+        nextInventory[def.id] = remaining;
+      }
+
+      const leftoverCarry = Math.round((accumulated - lost) * 10000) / 10000;
+      if (leftoverCarry > 1e-9) {
+        nextCarry[def.id] = leftoverCarry;
+      } else {
+        delete nextCarry[def.id];
+      }
+    }
+  }
+
+  return { inventory: nextInventory, spoilageCarry: nextCarry, spoiled };
+}
+
+/** 5-stage starvation & dehydration debuff progression table (Day 1..5+). */
+export const STARVATION_DEBUFF_STAGES = Object.freeze([
+  Object.freeze({ minDays: 0, id: 'healthy', label: 'Healthy', efficiencyPenalty: 0, popLossRatePerDay: 0 }),
+  Object.freeze({ minDays: 1, id: 'hunger_1', label: 'Hunger I', efficiencyPenalty: 0.1, popLossRatePerDay: 0 }),
+  Object.freeze({ minDays: 2, id: 'hunger_2', label: 'Hunger II', efficiencyPenalty: 0.3, popLossRatePerDay: 0 }),
+  Object.freeze({ minDays: 3, id: 'hunger_3', label: 'Hunger III', efficiencyPenalty: 0.5, popLossRatePerDay: 0 }),
+  Object.freeze({ minDays: 4, id: 'sickness', label: 'Sickness', efficiencyPenalty: 0.8, popLossRatePerDay: 0 }),
+  Object.freeze({ minDays: 5, id: 'death', label: 'Death', efficiencyPenalty: 0.8, popLossRatePerDay: 0.1 }),
+]);
+
+/**
+ * Classifies current starvation/dehydration debuff metadata for HUD badges and tooltips.
+ *
+ * @param {object} [params={}]
+ * @param {number} [params.starvationDays=0]
+ * @param {number} [params.efficiencyPenalty=0]
+ * @param {number} [params.starvationPopLoss=0]
+ * @param {boolean} [params.isAbandoned=false]
+ * @returns {{ id: string, label: string, efficiencyPenalty: number, severity: string }}
+ */
+export function getStarvationStageInfo({
+  starvationDays = 0,
+  efficiencyPenalty = 0,
+  starvationPopLoss = 0,
+  isAbandoned = false,
+} = {}) {
+  if (isAbandoned) {
+    return { id: 'abandoned', label: 'Abandoned', efficiencyPenalty: 0.8, severity: 'abandoned' };
+  }
+  if (starvationDays <= 0 && efficiencyPenalty <= 0 && starvationPopLoss <= 0) {
+    return { id: 'healthy', label: 'Healthy', efficiencyPenalty: 0, severity: 'ok' };
+  }
+  if (starvationDays >= 5) {
+    return { id: 'death', label: 'Death', efficiencyPenalty, severity: 'critical' };
+  }
+  if (efficiencyPenalty >= 0.79) {
+    return { id: 'sickness', label: 'Sickness', efficiencyPenalty, severity: 'danger' };
+  }
+  if (efficiencyPenalty >= 0.49) {
+    return { id: 'hunger_3', label: 'Hunger III', efficiencyPenalty, severity: 'warning' };
+  }
+  if (efficiencyPenalty >= 0.29) {
+    return { id: 'hunger_2', label: 'Hunger II', efficiencyPenalty, severity: 'warning' };
+  }
+  if (efficiencyPenalty > 0) {
+    return { id: 'hunger_1', label: 'Hunger I', efficiencyPenalty, severity: 'caution' };
+  }
+  return { id: 'recovering', label: 'Recovering', efficiencyPenalty: 0, severity: 'caution' };
+}
+
+/**
+ * Advances daily starvation/dehydration debuffs on deficit days or recovers efficiency (+20%/day)
+ * and max population (+10%/day) when fed & hydrated.
+ *
+ * @param {object} params
+ * @param {number} [params.starvationDays=0] - Prior consecutive/adjusted deficit day counter.
+ * @param {number} [params.efficiencyPenalty=0] - Current penalty fraction (0..0.8).
+ * @param {number} [params.starvationPopLoss=0] - Cumulative max population slots lost to Death days.
+ * @param {boolean} [params.isAbandoned=false] - Whether village has already collapsed.
+ * @param {boolean} [params.hasDeficit=false] - True when food OR water fell short on the day.
+ * @param {number} [params.buildingMaxPop=10] - Structural max pop capacity from active Main + Houses.
+ * @param {number} [params.elapsedDays=1] - Whole in-game days to simulate.
+ * @returns {{
+ *   starvationDays: number,
+ *   efficiencyPenalty: number,
+ *   starvationPopLoss: number,
+ *   effectiveMaxPop: number,
+ *   isAbandoned: boolean,
+ *   stage: { id: string, label: string, efficiencyPenalty: number, severity: string },
+ * }} Updated affliction and effective population cap state.
+ */
+export function advanceStarvationState({
+  starvationDays = 0,
+  efficiencyPenalty = 0,
+  starvationPopLoss = 0,
+  isAbandoned = false,
+  hasDeficit = false,
+  buildingMaxPop = 10,
+  elapsedDays = 1,
+} = {}) {
+  if (isAbandoned) {
+    return {
+      starvationDays,
+      efficiencyPenalty: 0.8,
+      starvationPopLoss: Math.max(starvationPopLoss, buildingMaxPop),
+      effectiveMaxPop: 0,
+      isAbandoned: true,
+      stage: getStarvationStageInfo({
+        starvationDays,
+        efficiencyPenalty: 0.8,
+        starvationPopLoss,
+        isAbandoned: true,
+      }),
+    };
+  }
+
+  let days = starvationDays;
+  let penalty = efficiencyPenalty;
+  let popLoss = starvationPopLoss;
+  let abandoned = false;
+  const popStep = buildingMaxPop > 0 ? Math.max(1, Math.round(buildingMaxPop * 0.1)) : 0;
+
+  for (let i = 0; i < Math.max(0, Math.floor(elapsedDays)); i += 1) {
+    if (hasDeficit) {
+      days += 1;
+      const stagePenalty = STARVATION_DEBUFF_STAGES[Math.min(days, 5)].efficiencyPenalty;
+      penalty = Math.max(penalty, stagePenalty);
+
+      if (days >= 5 && popStep > 0) {
+        popLoss = Math.min(buildingMaxPop, popLoss + popStep);
+        if (buildingMaxPop - popLoss <= 0) {
+          abandoned = true;
+          break;
+        }
+      }
+    } else if (penalty > 0 || popLoss > 0 || days > 0) {
+      penalty = Math.max(0, Math.round((penalty - 0.2) * 100) / 100);
+      popLoss = Math.max(0, popLoss - popStep);
+      days = penalty === 0 && popLoss === 0 ? 0 : Math.min(4, Math.max(1, Math.ceil(penalty * 5)));
+    }
+  }
+
+  const effectiveMaxPop = abandoned ? 0 : Math.max(0, buildingMaxPop - popLoss);
+  const nextAbandoned = abandoned || (days >= 5 && effectiveMaxPop <= 0);
+
+  return {
+    starvationDays: days,
+    efficiencyPenalty: nextAbandoned ? 0.8 : penalty,
+    starvationPopLoss: popLoss,
+    effectiveMaxPop,
+    isAbandoned: nextAbandoned,
+    stage: getStarvationStageInfo({
+      starvationDays: days,
+      efficiencyPenalty: nextAbandoned ? 0.8 : penalty,
+      starvationPopLoss: popLoss,
+      isAbandoned: nextAbandoned,
+    }),
+  };
+}
+
+/**
  * Calculates total maximum village population from active Main + House buildings.
  *
  * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.
@@ -319,6 +687,7 @@ export function calculateTileDistanceKm(from, to, tileDistanceKm = TERRITORY_TIL
  * @param {string} params.buildingId - Building template ID.
  * @param {number} [params.nowMs=0] - Real-time epoch timestamp when ordered.
  * @param {number} [params.speedKmPerHour=UNITS.builder.speedKmPerHour] - Builder travel speed.
+ * @param {number} [params.efficiencyPenalty=0] - Active village hunger/sickness penalty fraction (0..0.8).
  * @returns {{
  *   distanceKm: number,
  *   oneWayTravelMs: number,
@@ -334,15 +703,19 @@ export function calculateBuildTimestamps({
   buildingId,
   nowMs = 0,
   speedKmPerHour = UNITS.builder.speedKmPerHour,
+  efficiencyPenalty = 0,
 }) {
   const def = BUILDINGS[buildingId];
   if (!def) {
     throw new Error(`Unknown buildingId "${buildingId}".`);
   }
 
+  const efficiencyMult = Math.max(0.2, 1 - efficiencyPenalty);
   const distanceKm = calculateTileDistanceKm(from, to);
-  const oneWayTravelMs = Math.round((distanceKm / speedKmPerHour) * REAL_MS_PER_INGAME_HOUR);
-  const buildMs = Math.round(def.buildTimeHours * REAL_MS_PER_INGAME_HOUR);
+  const oneWayTravelMs = Math.round(
+    (distanceKm / (speedKmPerHour * efficiencyMult)) * REAL_MS_PER_INGAME_HOUR,
+  );
+  const buildMs = Math.round((def.buildTimeHours / efficiencyMult) * REAL_MS_PER_INGAME_HOUR);
   const arrivesAtMs = nowMs + oneWayTravelMs;
   const completedAtMs = arrivesAtMs + buildMs;
 
@@ -616,6 +989,7 @@ export function getMainTierChangeRule({
  * @param {number} [params.workDurationHours] - Optional work time override in in-game hours.
  * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
  * @param {number} [params.nowMs=0] - Real-time epoch timestamp when dispatched.
+ * @param {number} [params.efficiencyPenalty=0] - Active village hunger/sickness penalty fraction (0..0.8).
  * @returns {{
  *   distanceKm: number,
  *   oneWayTravelMs: number,
@@ -632,21 +1006,25 @@ export function calculateUnitActionTimestamps({
   workDurationHours,
   unlockedTechs = STARTER_UNLOCKED_TECHS,
   nowMs = 0,
+  efficiencyPenalty = 0,
 }) {
   const unitDef = UNITS[unitId];
   if (!unitDef) {
     throw new Error(`Unknown unitId "${unitId}".`);
   }
 
+  const efficiencyMult = Math.max(0.2, 1 - efficiencyPenalty);
   const bestTool = getBestUnlockedTool(unlockedTechs, 'general');
   const speedMult = bestTool?.modifiers?.workSpeedMultiplier ?? 1.0;
   const hours =
-    workDurationHours !== undefined
+    (workDurationHours !== undefined
       ? workDurationHours
-      : unitDef.workDurationHours / speedMult;
+      : unitDef.workDurationHours / speedMult) / efficiencyMult;
 
   const distanceKm = calculateTileDistanceKm(from, to);
-  const oneWayTravelMs = Math.round((distanceKm / unitDef.speedKmPerHour) * REAL_MS_PER_INGAME_HOUR);
+  const oneWayTravelMs = Math.round(
+    (distanceKm / (unitDef.speedKmPerHour * efficiencyMult)) * REAL_MS_PER_INGAME_HOUR,
+  );
   const workMs = Math.round(hours * REAL_MS_PER_INGAME_HOUR);
   const arrivesAtMs = nowMs + oneWayTravelMs;
   const workCompletedAtMs = arrivesAtMs + workMs;
@@ -672,6 +1050,7 @@ export function calculateUnitActionTimestamps({
  * @param {number} [params.workDurationHours] - Optional work duration override in in-game hours.
  * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
  * @param {number} [params.nowMs=0] - Virtual clock timestamp when dispatched.
+ * @param {number} [params.efficiencyPenalty=0] - Active village hunger/sickness penalty fraction (0..0.8).
  * @returns {{
  *   distanceKm: number,
  *   teamSpeedKmPerHour: number,
@@ -690,6 +1069,7 @@ export function calculateTeamActionTimestamps({
   workDurationHours,
   unlockedTechs = STARTER_UNLOCKED_TECHS,
   nowMs = 0,
+  efficiencyPenalty = 0,
 }) {
   const activeEntries = Object.entries(units ?? {}).filter(
     ([unitId, count]) => UNITS[unitId] && Number(count) > 0,
@@ -705,12 +1085,17 @@ export function calculateTeamActionTimestamps({
     ...activeEntries.map(([unitId]) => UNITS[unitId].workDurationHours),
   );
 
+  const efficiencyMult = Math.max(0.2, 1 - efficiencyPenalty);
   const bestTool = getBestUnlockedTool(unlockedTechs, 'general');
   const speedMult = bestTool?.modifiers?.workSpeedMultiplier ?? 1.0;
-  const hours = workDurationHours !== undefined ? workDurationHours : baseWorkHours / speedMult;
+  const hours =
+    (workDurationHours !== undefined ? workDurationHours : baseWorkHours / speedMult) /
+    efficiencyMult;
 
   const distanceKm = calculateTileDistanceKm(from, to);
-  const oneWayTravelMs = Math.round((distanceKm / teamSpeedKmPerHour) * REAL_MS_PER_INGAME_HOUR);
+  const oneWayTravelMs = Math.round(
+    (distanceKm / (teamSpeedKmPerHour * efficiencyMult)) * REAL_MS_PER_INGAME_HOUR,
+  );
   const workMs = Math.round(hours * REAL_MS_PER_INGAME_HOUR);
   const arrivesAtMs = nowMs + oneWayTravelMs;
   const workCompletedAtMs = arrivesAtMs + workMs;
@@ -844,6 +1229,7 @@ function pickPannableNuggetId(rng, availableOres = []) {
  * @param {{ isWater?: boolean, forestDensity?: number }} params.tile - Target Territory tile.
  * @param {string[]} [params.availableOres=[]] - Regional Territory ores for panning bias.
  * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
+ * @param {number} [params.efficiencyPenalty=0] - Active village hunger/sickness penalty fraction (0..0.8).
  * @param {() => number} params.rng - Explicit seeded PRNG returning [0, 1) (Math.random is never called).
  * @returns {{
  *   terrain: 'water' | 'forest' | 'fields',
@@ -859,6 +1245,7 @@ export function rollTileActionYield({
   tile,
   availableOres = [],
   unlockedTechs = STARTER_UNLOCKED_TECHS,
+  efficiencyPenalty = 0,
   rng,
 }) {
   const unitDef = UNITS[unitId];
@@ -870,6 +1257,7 @@ export function rollTileActionYield({
   }
 
   const terrain = classifyTerritoryTile(tile);
+  const efficiencyMult = Math.max(0.2, 1 - efficiencyPenalty);
 
   if (action === 'collect_water') {
     if (terrain !== 'water') {
@@ -878,7 +1266,7 @@ export function rollTileActionYield({
     return {
       terrain,
       items: {},
-      waterBowls: WATER_BOWLS_PER_JAR,
+      waterBowls: Math.max(1, Math.round(WATER_BOWLS_PER_JAR * efficiencyMult)),
       foundNothing: false,
     };
   }
@@ -898,7 +1286,8 @@ export function rollTileActionYield({
 
   const adjustedEntries = table.map((entry) => ({
     ...entry,
-    effectiveWeight: entry.itemId === null ? entry.weight * nothingMult : entry.weight,
+    effectiveWeight:
+      entry.itemId === null ? entry.weight * nothingMult : entry.weight * efficiencyMult,
   }));
 
   const totalWeight = adjustedEntries.reduce((sum, entry) => sum + entry.effectiveWeight, 0);
@@ -917,7 +1306,8 @@ export function rollTileActionYield({
     return { terrain, items: {}, waterBowls: 0, foundNothing: true };
   }
 
-  const qty = rollInt(rng, picked.min, picked.max + yieldBonus);
+  const rawQty = rollInt(rng, picked.min, picked.max + yieldBonus);
+  const qty = efficiencyPenalty > 0 ? Math.max(1, Math.round(rawQty * efficiencyMult)) : rawQty;
   const itemId =
     picked.itemId === 'ore_nugget' ? pickPannableNuggetId(rng, availableOres) : picked.itemId;
 
@@ -941,6 +1331,7 @@ export function rollTileActionYield({
  * @param {{ isWater?: boolean, forestDensity?: number }} params.tile - Target Territory tile.
  * @param {string[]} [params.availableOres=[]] - Regional Territory ores.
  * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked techs.
+ * @param {number} [params.efficiencyPenalty=0] - Active village hunger/sickness penalty fraction (0..0.8).
  * @param {() => number} params.rng - Explicit seeded PRNG function.
  * @returns {{
  *   terrain: 'water' | 'forest' | 'fields',
@@ -956,12 +1347,15 @@ export function resolveTeamActionYield({
   tile,
   availableOres = [],
   unlockedTechs = STARTER_UNLOCKED_TECHS,
+  efficiencyPenalty = 0,
   rng,
 }) {
   const gatherers = Math.max(0, Math.floor(units.gatherer ?? 0));
   const hunters = Math.max(0, Math.floor(units.hunter ?? 0));
   const waterCollectors = Math.max(0, Math.floor(units.water ?? 0));
   const terrain = classifyTerritoryTile(tile);
+  const efficiencyMult = Math.max(0.2, 1 - efficiencyPenalty);
+  const bowlsPerJar = Math.max(1, Math.round(WATER_BOWLS_PER_JAR * efficiencyMult));
 
   if (action === 'collect_water') {
     const totalCollectors = waterCollectors > 0 ? waterCollectors : gatherers + hunters;
@@ -974,7 +1368,7 @@ export function resolveTeamActionYield({
     return {
       terrain,
       items: {},
-      waterBowls: totalCollectors * WATER_BOWLS_PER_JAR,
+      waterBowls: totalCollectors * bowlsPerJar,
       rollsExecuted: totalCollectors,
       emptyRolls: 0,
     };
@@ -993,6 +1387,7 @@ export function resolveTeamActionYield({
         tile,
         availableOres,
         unlockedTechs,
+        efficiencyPenalty,
         rng,
       });
       rollsExecuted += 1;
@@ -1016,7 +1411,7 @@ export function resolveTeamActionYield({
     if (gatherers > 0) runRolls('gatherer', 'gather', gatherers);
     if (hunters > 0) runRolls('hunter', 'hunt', hunters);
     if (waterCollectors > 0) {
-      waterBowls = waterCollectors * WATER_BOWLS_PER_JAR;
+      waterBowls = waterCollectors * bowlsPerJar;
       rollsExecuted += waterCollectors;
     }
     return { terrain, items, waterBowls, rollsExecuted, emptyRolls };

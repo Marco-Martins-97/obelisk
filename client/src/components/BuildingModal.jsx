@@ -89,6 +89,7 @@ export default function BuildingModal({
   }, [building, onClose]);
 
   const def = building ? BUILDINGS[building.buildingId] : null;
+  const isAbandoned = Boolean(state.isAbandoned);
   const main = state.buildings.find((b) => b.buildingId === 'main') ?? building;
   const ageLabel = building ? (AGES[(building.tier ?? 1) - 1] ?? 'stone') : 'stone';
   const activeBuildTask = building
@@ -172,6 +173,17 @@ export default function BuildingModal({
           </div>
 
           <p className="mt-3 text-xs text-slate-300">{def.description}</p>
+          {(def.storageBonusPerLevel > 0 || def.popBonusPerLevel > 0) && (
+            <p className="mt-1 font-mono text-[11px] text-emerald-300">
+              {def.storageBonusPerLevel > 0
+                ? `Pooled Storage Bonus: +${def.storageBonusPerLevel * building.level} bulk`
+                : ''}
+              {def.storageBonusPerLevel > 0 && def.popBonusPerLevel > 0 ? ' · ' : ''}
+              {def.popBonusPerLevel > 0
+                ? `Housing Bonus: +${def.popBonusPerLevel * building.level} max pop`
+                : ''}
+            </p>
+          )}
 
           {building.status === 'constructing' ? (
             <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs">
@@ -202,7 +214,7 @@ export default function BuildingModal({
                   <div className="grid gap-2">
                     {def.trainsUnits.map((unitId) => {
                       const u = UNITS[unitId];
-                      const canTrain = popUsed + u.popCost <= maxPop;
+                      const canTrain = !isAbandoned && popUsed + u.popCost <= maxPop;
                       return (
                         <div
                           key={unitId}
@@ -277,12 +289,12 @@ export default function BuildingModal({
                           ) : (
                             <button
                               type="button"
-                              disabled={!triggerOk || !canAfford}
+                              disabled={isAbandoned || !triggerOk || !canAfford}
                               onClick={() =>
                                 onStartResearch({ buildingInstanceId: building.instanceId, techId })
                               }
                               className={`rounded px-2.5 py-1 font-semibold ${
-                                triggerOk && canAfford
+                                !isAbandoned && triggerOk && canAfford
                                   ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
                                   : 'cursor-not-allowed bg-slate-800 text-slate-500'
                               }`}
@@ -304,9 +316,12 @@ export default function BuildingModal({
                   <div className="space-y-2">
                     {def.craftsRecipes.map((recipeId) => {
                       const recipe = RECIPES[recipeId];
+                      const waterCost = recipe.waterCostBowls ?? 0;
+                      const hasWater = (state.water ?? 0) >= waterCost;
                       const canAfford = Object.entries(recipe.inputs).every(
                         ([id, q]) => (state.inventory[id] ?? 0) >= q,
                       );
+                      const canCraft = !isAbandoned && canAfford && hasWater;
 
                       return (
                         <div
@@ -323,7 +338,8 @@ export default function BuildingModal({
                               )}
                             </div>
                             <div className="text-[11px] text-slate-400">
-                              {formatCostSummary(recipe.inputs)} →{' '}
+                              {formatCostSummary(recipe.inputs)}
+                              {waterCost > 0 ? ` + ${waterCost} Water Bowls` : ''} →{' '}
                               {Object.entries(recipe.outputs)
                                 .map(([id, q]) => `${q} ${RESOURCES[id]?.name ?? id}`)
                                 .join(', ')}{' '}
@@ -332,12 +348,12 @@ export default function BuildingModal({
                           </div>
                           <button
                             type="button"
-                            disabled={!canAfford}
+                            disabled={!canCraft}
                             onClick={() =>
                               onStartCraft({ buildingInstanceId: building.instanceId, recipeId })
                             }
                             className={`rounded px-2.5 py-1 font-semibold ${
-                              canAfford
+                              canCraft
                                 ? 'bg-sky-500 text-slate-950 hover:bg-sky-400'
                                 : 'cursor-not-allowed bg-slate-800 text-slate-500'
                             }`}
@@ -378,10 +394,18 @@ export default function BuildingModal({
                   </div>
                   <button
                     type="button"
-                    disabled={!levelUpgradeRule.allowed || !canAffordLevelUpgrade || freeUnits.builder < 1}
+                    disabled={
+                      isAbandoned ||
+                      !levelUpgradeRule.allowed ||
+                      !canAffordLevelUpgrade ||
+                      freeUnits.builder < 1
+                    }
                     onClick={() => onUpgradeBuilding(building.instanceId)}
                     className={`rounded px-2.5 py-1 font-semibold ${
-                      levelUpgradeRule.allowed && canAffordLevelUpgrade && freeUnits.builder >= 1
+                      !isAbandoned &&
+                      levelUpgradeRule.allowed &&
+                      canAffordLevelUpgrade &&
+                      freeUnits.builder >= 1
                         ? 'bg-emerald-600 text-white hover:bg-emerald-500'
                         : 'cursor-not-allowed bg-slate-800 text-slate-500'
                     }`}
@@ -414,6 +438,7 @@ export default function BuildingModal({
                       <button
                         type="button"
                         disabled={
+                          isAbandoned ||
                           !tierUpRule.allowed ||
                           freeUnits.builder < tierUpRule.buildersRequired ||
                           !Object.entries(tierUpRule.cost).every(
@@ -422,6 +447,7 @@ export default function BuildingModal({
                         }
                         onClick={() => onChangeMainTier(building.tier + 1)}
                         className={`rounded px-2.5 py-1 font-semibold ${
+                          !isAbandoned &&
                           tierUpRule.allowed &&
                           freeUnits.builder >= tierUpRule.buildersRequired &&
                           Object.entries(tierUpRule.cost).every(
@@ -443,8 +469,9 @@ export default function BuildingModal({
                       </div>
                       <button
                         type="button"
+                        disabled={isAbandoned}
                         onClick={() => onChangeMainTier(building.tier - 1)}
-                        className="rounded border border-slate-700 px-2.5 py-1 text-slate-200 hover:bg-slate-800"
+                        className="rounded border border-slate-700 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Downgrade (Free)
                       </button>

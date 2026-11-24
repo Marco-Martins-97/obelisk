@@ -26,6 +26,7 @@ export const SIZE_CLASSES = Object.freeze({
  * @param {number} [config.tier=1] - Progression tier.
  * @param {boolean} [config.edible=false] - Whether populations can eat it directly as sustenance.
  * @param {number} [config.foodValue=0] - Daily food units restored per consumed item.
+ * @param {number} [config.spoilRatePerDay=0] - Fraction of stored stock spoiled per in-game day (0..1).
  * @param {number} [config.burnTimeSec=0] - Fuel duration when burned (0 if non-combustible).
  * @param {string} [config.description=''] - Short tooltip summary.
  * @returns {Readonly<object>} Immutable normalized resource template.
@@ -41,6 +42,11 @@ export function createResource(config) {
     throw new RangeError(`Resource "${config.id}" sizeClass must be an integer 1..5, got ${sizeClass}.`);
   }
 
+  const spoilRatePerDay = config.spoilRatePerDay ?? 0;
+  if (!Number.isFinite(spoilRatePerDay) || spoilRatePerDay < 0 || spoilRatePerDay > 1) {
+    throw new RangeError(`Resource "${config.id}" spoilRatePerDay must be within 0..1, got ${spoilRatePerDay}.`);
+  }
+
   return Object.freeze({
     id: config.id,
     name: config.name,
@@ -52,6 +58,7 @@ export function createResource(config) {
     stackable: config.stackable ?? true,
     edible: Boolean(config.edible),
     foodValue: config.foodValue ?? 0,
+    spoilRatePerDay,
     burnTimeSec: config.burnTimeSec ?? 0,
     description: config.description ?? '',
   });
@@ -118,6 +125,12 @@ export const RESOURCES = Object.freeze({
     burnTimeSec: 300,
     description: 'High-heat kiln fuel required to smelt copper nuggets into ingots.',
   }),
+  salt: createResource({
+    id: 'salt',
+    name: 'Salt',
+    sizeClass: 1,
+    description: 'Mineral salt harvested by boiling water or mining limestone and shale layers.',
+  }),
 
   // Food & sustenance items
   berries: createResource({
@@ -127,6 +140,7 @@ export const RESOURCES = Object.freeze({
     sizeClass: 2,
     edible: true,
     foodValue: 1,
+    spoilRatePerDay: 0.25,
     description: 'Foraged wild forest berries.',
   }),
   grain: createResource({
@@ -136,6 +150,7 @@ export const RESOURCES = Object.freeze({
     sizeClass: 2,
     edible: true,
     foodValue: 1,
+    spoilRatePerDay: 0.03,
     description: 'Field grain harvested during hunting expeditions.',
   }),
   meat: createResource({
@@ -144,7 +159,8 @@ export const RESOURCES = Object.freeze({
     category: 'food',
     sizeClass: 3,
     edible: false,
-    description: 'Hunted forest game; must be cooked over a Firepit.',
+    spoilRatePerDay: 0.45,
+    description: 'Hunted forest game; cook at a Firepit or cure on a Drying Rack.',
   }),
   cooked_meat: createResource({
     id: 'cooked_meat',
@@ -153,7 +169,28 @@ export const RESOURCES = Object.freeze({
     sizeClass: 3,
     edible: true,
     foodValue: 3,
+    spoilRatePerDay: 0.2,
     description: 'Roasted meat cooked at a Firepit.',
+  }),
+  dried_meat: createResource({
+    id: 'dried_meat',
+    name: 'Dried Meat',
+    category: 'food',
+    sizeClass: 2,
+    edible: true,
+    foodValue: 3,
+    spoilRatePerDay: 0.05,
+    description: 'Air-dried game meat preserved on a Drying Rack without salt.',
+  }),
+  salted_meat: createResource({
+    id: 'salted_meat',
+    name: 'Salted Meat',
+    category: 'food',
+    sizeClass: 2,
+    edible: true,
+    foodValue: 4,
+    spoilRatePerDay: 0.01,
+    description: 'Salt-cured meat preserved on a Drying Rack for long-term storage.',
   }),
   fish: createResource({
     id: 'fish',
@@ -161,7 +198,8 @@ export const RESOURCES = Object.freeze({
     category: 'food',
     sizeClass: 2,
     edible: false,
-    description: 'Fresh river or lake fish; cook at a Firepit.',
+    spoilRatePerDay: 0.5,
+    description: 'Fresh river or lake fish; cook at a Firepit or cure on a Drying Rack.',
   }),
   cooked_fish: createResource({
     id: 'cooked_fish',
@@ -170,7 +208,28 @@ export const RESOURCES = Object.freeze({
     sizeClass: 2,
     edible: true,
     foodValue: 2,
+    spoilRatePerDay: 0.25,
     description: 'Grilled fish cooked at a Firepit.',
+  }),
+  dried_fish: createResource({
+    id: 'dried_fish',
+    name: 'Dried Fish',
+    category: 'food',
+    sizeClass: 2,
+    edible: true,
+    foodValue: 2,
+    spoilRatePerDay: 0.06,
+    description: 'Air-dried fish preserved on a Drying Rack without salt.',
+  }),
+  salted_fish: createResource({
+    id: 'salted_fish',
+    name: 'Salted Fish',
+    category: 'food',
+    sizeClass: 2,
+    edible: true,
+    foodValue: 3,
+    spoilRatePerDay: 0.01,
+    description: 'Salt-cured fish preserved on a Drying Rack for long-term storage.',
   }),
 
   // Copper Age evolution milestone item
@@ -242,13 +301,14 @@ export const PANNABLE_ORE_NUGGETS = Object.freeze(
 );
 
 /**
- * Starter inventory stored inside the Main building at spawn:
- * 10 sticks (20) + 10 pelts (20) + 5 small_stones (10) = 50 / 250 bulk capacity.
+ * Starter inventory stored inside pooled village storage at spawn:
+ * 10 sticks (20) + 10 pelts (20) + 5 small_stones (10) + 5 berries (10) = 60 / 250 bulk capacity.
  */
 export const STARTER_INVENTORY = Object.freeze({
   sticks: 10,
   pelts: 10,
   small_stones: 5,
+  berries: 5,
 });
 
 /** Starter Main village pools at spawn (before any units are trained). */
@@ -257,7 +317,6 @@ export const STARTER_VILLAGE_POOLS = Object.freeze({
   mainLevel: 1,
   storageCapacity: 250,
   basePopCapacity: 10,
-  food: 5,
   water: 5,
   waterCapacity: 10,
 });

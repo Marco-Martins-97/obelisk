@@ -24,7 +24,9 @@
  * @param {string[]} [config.requiredTechs=[]] - Technology IDs required to build/upgrade.
  * @param {string[]} [config.researchesTechs=[]] - Technology IDs researchable inside this building.
  * @param {Record<number, object>} [config.tierUpgrades={}] - Per-tier upgrade rules (used by Main).
- * @param {number} [config.storageBonusPerLevel=0] - Bulk storage capacity added per level.
+ * @param {number} [config.storageBonusPerLevel=0] - General bulk storage capacity added per level.
+ * @param {number} [config.preservedStorageBonusPerLevel=0] - Preserved food bulk capacity added per level (future Granary/Root Cellar).
+ * @param {number} [config.spoilageMultiplier=1] - Spoilage multiplier (e.g., 0.4 = -60%) inside preserved storage.
  * @param {number} [config.popBonusPerLevel=0] - Max population slots added per level.
  * @param {number} [config.waterCapacity=0] - Dedicated water storage capacity in bowls.
  * @param {string[]} [config.trainsUnits=[]] - Unit IDs trainable inside this building.
@@ -42,6 +44,8 @@ export function createBuilding(config) {
   const workersRequired = config.workersRequired ?? 0;
   const buildersRequired = config.buildersRequired ?? 1;
   const buildTimeHours = config.buildTimeHours ?? 1;
+  const preservedStorageBonusPerLevel = config.preservedStorageBonusPerLevel ?? 0;
+  const spoilageMultiplier = config.spoilageMultiplier ?? 1;
 
   if (!Number.isInteger(maxLevel) || maxLevel < 1) {
     throw new RangeError(`Building "${config.id}" maxLevel must be >= 1.`);
@@ -54,6 +58,12 @@ export function createBuilding(config) {
   }
   if (!Number.isFinite(buildTimeHours) || buildTimeHours < 0) {
     throw new RangeError(`Building "${config.id}" buildTimeHours must be >= 0.`);
+  }
+  if (!Number.isFinite(preservedStorageBonusPerLevel) || preservedStorageBonusPerLevel < 0) {
+    throw new RangeError(`Building "${config.id}" preservedStorageBonusPerLevel must be >= 0.`);
+  }
+  if (!Number.isFinite(spoilageMultiplier) || spoilageMultiplier < 0 || spoilageMultiplier > 1) {
+    throw new RangeError(`Building "${config.id}" spoilageMultiplier must be within 0..1.`);
   }
 
   const normalizedTierUpgrades = Object.fromEntries(
@@ -84,6 +94,8 @@ export function createBuilding(config) {
     researchesTechs: Object.freeze([...(config.researchesTechs ?? [])]),
     tierUpgrades: Object.freeze(normalizedTierUpgrades),
     storageBonusPerLevel: config.storageBonusPerLevel ?? 0,
+    preservedStorageBonusPerLevel,
+    spoilageMultiplier,
     popBonusPerLevel: config.popBonusPerLevel ?? 0,
     waterCapacity: config.waterCapacity ?? 0,
     trainsUnits: Object.freeze([...(config.trainsUnits ?? [])]),
@@ -128,8 +140,8 @@ export const BUILDINGS = Object.freeze({
     buildTimeHours: 1.5,
     cost: { sticks: 4, small_stones: 3 },
     researchesTechs: ['stone_tools'],
-    craftsRecipes: ['cook_meat', 'cook_fish'],
-    description: 'Cooks meat and fish and researches Stone Tools technology.',
+    craftsRecipes: ['cook_meat', 'cook_fish', 'boil_salt'],
+    description: 'Cooks meat/fish, boils water into salt, and researches Stone Tools.',
   }),
   house: createBuilding({
     id: 'house',
@@ -140,6 +152,28 @@ export const BUILDINGS = Object.freeze({
     cost: { sticks: 6, pelts: 4, straw: 4 },
     popBonusPerLevel: 10,
     description: 'Increases maximum village population by +10 per level (max Lv 3).',
+  }),
+  warehouse: createBuilding({
+    id: 'warehouse',
+    name: 'Warehouse',
+    workersRequired: 0,
+    buildersRequired: 1,
+    buildTimeHours: 2.0,
+    requiredTechs: [],
+    cost: { sticks: 8, pelts: 4, straw: 6 },
+    storageBonusPerLevel: 250,
+    description: 'Expands pooled village storage capacity by +250 bulk per level (max Lv 3).',
+  }),
+  drying_rack: createBuilding({
+    id: 'drying_rack',
+    name: 'Drying Rack',
+    workersRequired: 1,
+    buildersRequired: 1,
+    buildTimeHours: 1.5,
+    requiredTechs: ['stone_tools'],
+    cost: { sticks: 5, pelts: 2, straw: 2 },
+    craftsRecipes: ['dry_meat', 'dry_fish', 'salt_meat', 'salt_fish'],
+    description: 'Air-dries or salt-cures meat and fish to sharply reduce daily spoilage.',
   }),
   kiln: createBuilding({
     id: 'kiln',

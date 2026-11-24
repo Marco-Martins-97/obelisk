@@ -5,7 +5,7 @@ All buildings are defined in `/shared/config/buildings.js` via `createBuilding()
 - `id`, `name`, `age` (`'stone' | 'copper' | 'bronze' | 'iron' | 'steel'`)
 - `maxLevel`, `buildTime` (duration in seconds/minutes), `buildersRequired` (min `1` available `builder` in Stone Age; scales in future ages), `workersRequired` (population used to operate the building)
 - `cost` (`{ [resourceId]: amount }`)
-- `storageCapacity`, `waterCapacity`, `popCapacity`
+- `storageBonusPerLevel`, `preservedStorageBonusPerLevel`, `spoilageMultiplier`, `waterCapacity`, `popBonusPerLevel`
 - `recipes` (crafting/smelting IDs runnable inside the building)
 
 MongoDB stores only dynamic building instances per settlement:
@@ -28,9 +28,11 @@ MongoDB stores only dynamic building instances per settlement:
 
 | Building | Role & Starting State | Levels | Requirements, Workers & Cost |
 | :--- | :--- | :--- | :--- |
-| **`MAIN`** | Pre-placed village center at `(12, 12)` (`tier: 1`, `level: 1`). Provides starting `storage: 50/250` (`10 sticks`, `10 pelts`, `5 small_stones`), `pop: 0/10`, `food: 5`, and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1..3` | Pre-built; Level upgrade (`+250` storage, `+10` pop/lv): base `{ sticks: 6, small_stones: 5, pelts: 4 } × targetLevel` (`2.5h`, `1` builder); Tier 2 (`Copper Age`) requires `copper_age` tech + `{ small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 }` (`4.0h`, `1` builder) |
-| **`FIREPIT`** | Cooks raw `meat` → `cooked_meat`, `fish` → `cooked_fish`; unlocks & researches **`stone_tools`** technology. | `1..3` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` (`1.5h`) |
+| **`MAIN`** | Pre-placed village center at `(12, 12)` (`tier: 1`, `level: 1`). Provides starting `storage: 60/250` (`10 sticks`, `10 pelts`, `5 small_stones`, `5 berries`), `pop: 0/10`, stored `food: 5` (FEFO auto-eaten), and `water: 5/10` (`1 jar` = `10` bowls). Trains `gatherer`, `hunter`, `builder`. | `1..3` | Pre-built; Level upgrade (`+250` storage, `+10` pop/lv): base `{ sticks: 6, small_stones: 5, pelts: 4 } × targetLevel` (`2.5h`, `1` builder); Tier 2 (`Copper Age`) requires `copper_age` tech + `{ small_stones: 8, sticks: 8, straw: 6, pelts: 4, clay: 6 }` (`4.0h`, `1` builder) |
+| **`FIREPIT`** | Cooks raw `meat` → `cooked_meat`, `fish` → `cooked_fish`, boils water (`boil_salt`: `2 sticks + 10 water bowls` → `2 salt`); unlocks & researches **`stone_tools`** technology. | `1..3` | `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 4, small_stones: 3 }` (`1.5h`) |
 | **`HOUSE`** | Increases maximum settlement population by **`+10` per level**. | `1..3` | `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 6, pelts: 4, straw: 4 }` (`2.0h`) |
+| **`WAREHOUSE`** | Expands unified village bulk storage by **`+250` per level**. | `1..3` | No tech required (`requiredTechs: []`); `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 8, pelts: 4, straw: 6 }` (`2.0h`) |
+| **`DRYING_RACK`** | Air-dries `meat`/`fish` or salt-cures them into `dried_*` / `salted_*` provisions to slow spoilage. | `1..3` | Requires `stone_tools` (`requiredTechs: ['stone_tools']`); `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 5, pelts: 2, straw: 2 }` (`1.5h`) |
 | **`KILN`** | Crafts `charcoal` and smelts `10 copper_nuggets` → `1 copper_ingot` (triggers **`copper_age`**). | `1..3` | Requires `stone_tools` (`requiredTechs: ['stone_tools']`); `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` (`3.0h`) |
 
 ### 2.1 `MAIN` Tier vs. Building Level & Age Downgrade Rules

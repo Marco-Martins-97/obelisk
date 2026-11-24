@@ -5,29 +5,37 @@ import {
   DAYS_PER_SEASON,
   DAYS_PER_YEAR,
   HOURS_PER_INGAME_DAY,
+  ORES,
   PANNABLE_ORE_NUGGETS,
   REAL_MS_PER_INGAME_DAY,
   REAL_MS_PER_INGAME_HOUR,
   RECIPES,
   RESOURCES,
+  ROCK_TYPES,
   SIZE_CLASSES,
   STARTER_INVENTORY,
   STARTER_UNLOCKED_TECHS,
   STARTER_VILLAGE_POOLS,
+  STARVATION_DEBUFF_STAGES,
   TECHNOLOGIES,
   TERRITORY_TILE_DISTANCE_KM,
   UNITS,
   WATER_BOWLS_PER_JAR,
+  advanceStarvationState,
+  applyDailySpoilage,
   calculateBuildTimestamps,
   calculateDailySurvival,
   calculateMaxPopulation,
   calculatePopUsed,
+  calculateStorageCapacity,
   calculateStorageUsed,
   calculateTeamActionTimestamps,
   calculateTileDistanceKm,
+  calculateTotalStoredFood,
   calculateUnitActionTimestamps,
   canBuildOrUpgradeBuilding,
   classifyTerritoryTile,
+  consumeStoredFoodFEFO,
   createBuilding,
   createInitialTerritoryFog,
   createPrng,
@@ -41,6 +49,7 @@ import {
   getCalendarState,
   getExploredBounds,
   getMainTierChangeRule,
+  getStarvationStageInfo,
   getTaskPhase,
   isTechTriggerSatisfied,
   normalizedTempToCelsius,
@@ -70,17 +79,22 @@ describe('Stone Age templates, starter pools & linear sizeClass', () => {
 
     expect(RESOURCES.straw.sizeClass).toBe(2);
     expect(RESOURCES.cooked_fish.edible).toBe(true);
-    expect(calculateStorageUsed(STARTER_INVENTORY)).toBe(50);
+    expect(calculateStorageUsed(STARTER_INVENTORY)).toBe(60);
+    expect(calculateTotalStoredFood(STARTER_INVENTORY)).toBe(5);
     expect(STARTER_VILLAGE_POOLS.storageCapacity).toBe(250);
     expect(BUILDINGS.main.storageBonusPerLevel).toBe(250);
     expect(STARTER_VILLAGE_POOLS.water).toBe(5);
     expect(STARTER_VILLAGE_POOLS.waterCapacity).toBe(10);
   });
 
-  it('excludes flux and coal from pannable river/lake ore nuggets', () => {
+  it('excludes flux, coal, and salt from pannable river/lake ore nuggets while placing salt in limestone/shale', () => {
     expect(PANNABLE_ORE_NUGGETS).toContain('copper_nugget');
     expect(PANNABLE_ORE_NUGGETS).not.toContain('flux_nugget');
     expect(PANNABLE_ORE_NUGGETS).not.toContain('coal_nugget');
+    expect(PANNABLE_ORE_NUGGETS).not.toContain('salt_nugget');
+    expect(ORES.salt).toBeDefined();
+    expect(ROCK_TYPES.find((r) => r.id === 'limestone').ores).toContain('salt');
+    expect(ROCK_TYPES.find((r) => r.id === 'shale').ores).toContain('salt');
   });
 
   it('balances Firepit + House starter costs cleanly against starter inventory', () => {
@@ -288,7 +302,7 @@ describe('6x calendar, continuous day/night cycle & popUsed survival', () => {
 
     const spawnSurvival = calculateDailySurvival({
       popUsed: 0,
-      food: STARTER_VILLAGE_POOLS.food,
+      food: calculateTotalStoredFood(STARTER_INVENTORY),
       water: STARTER_VILLAGE_POOLS.water,
       elapsedDays: 3,
     });
@@ -605,5 +619,170 @@ describe('7x7 starter fog, 3x3 border expansion & Continent ring unlock', () => 
       height: 7,
       exploredCount: 49,
     });
+  });
+});
+
+describe('Storage pooling (M1), FEFO auto-eating (C1), fractional spoilage (S1), Salt/Drying & 5-stage debuffs', () => {
+  it('pools storage across active Main + Warehouses and supports future preserved storage multipliers', () => {
+    const cap = calculateStorageCapacity([
+      { buildingId: 'main', level: 2, status: 'active' },
+      { buildingId: 'warehouse', level: 2, status: 'active' },
+      { buildingId: 'warehouse', level: 1, status: 'constructing' },
+    ]);
+    expect(cap).toEqual({
+      generalCapacity: 1000,
+      preservedFoodCapacity: 0,
+      totalCapacity: 1000,
+      preservedSpoilageMultiplier: 1,
+    });
+
+    expect(BUILDINGS.warehouse.requiredTechs).toEqual([]);
+    expect(BUILDINGS.warehouse.cost).toEqual({ sticks: 8, pelts: 4, straw: 6 });
+    expect(BUILDINGS.drying_rack.requiredTechs).toEqual(['stone_tools']);
+    expect(RECIPES.boil_salt.waterCostBowls).toBe(10);
+    expect(RECIPES.boil_salt.outputs).toEqual({ salt: 2 });
+    expect(RECIPES.salt_meat.inputs).toEqual({ meat: 1, salt: 1 });
+    expect(RESOURCES.dried_meat.spoilRatePerDay).toBeLessThan(RESOURCES.cooked_meat.spoilRatePerDay);
+    expect(RESOURCES.salted_meat.spoilRatePerDay).toBeLessThan(RESOURCES.dried_meat.spoilRatePerDay);
+  });
+
+  it('auto-consumes fastest-spoiling edible items first (FEFO) and retains multi-ration foodCarry', () => {
+    const day1 = consumeStoredFoodFEFO({
+      inventory: { salted_meat: 2, cooked_meat: 1, berries: 1 },
+      foodCarry: 0,
+      foodNeeded: 2,
+    });
+    // Eats berries first (25%/d, 1 food), then breaks 1 cooked_meat (20%/d, 3 food) -> leftover 2 carry.
+    expect(day1.consumed).toEqual({ berries: 1, cooked_meat: 1 });
+    expect(day1.inventory).toEqual({ salted_meat: 2 });
+    expect(day1.foodCarry).toBe(2);
+    expect(day1.isStarving).toBe(false);
+
+    // Day 2 consumes from foodCarry first before touching salted_meat (1%/d).
+    const day2 = consumeStoredFoodFEFO({
+      inventory: day1.inventory,
+      foodCarry: day1.foodCarry,
+      foodNeeded: 2,
+    });
+    expect(day2.consumed).toEqual({});
+    expect(day2.inventory).toEqual({ salted_meat: 2 });
+    expect(day2.foodCarry).toBe(0);
+
+    // Deficit case
+    const starved = consumeStoredFoodFEFO({
+      inventory: { berries: 1 },
+      foodCarry: 0,
+      foodNeeded: 4,
+    });
+    expect(starved.foodDeficit).toBe(3);
+    expect(starved.isStarving).toBe(true);
+    expect(starved.inventory).toEqual({});
+  });
+
+  it('applies per-type fractional spoilage carry without deleting small stacks on Day 1', () => {
+    const day1 = applyDailySpoilage({
+      inventory: { berries: 2, fish: 10 },
+      spoilageCarry: {},
+      elapsedDays: 1,
+    });
+    // berries: 2 * 0.25 = 0.50 -> 0 lost, carry 0.5; fish: 10 * 0.5 = 5 -> 5 lost, carry 0.
+    expect(day1.inventory).toEqual({ berries: 2, fish: 5 });
+    expect(day1.spoilageCarry).toEqual({ berries: 0.5 });
+    expect(day1.spoiled).toEqual({ fish: 5 });
+
+    const day2 = applyDailySpoilage({
+      inventory: day1.inventory,
+      spoilageCarry: day1.spoilageCarry,
+      elapsedDays: 1,
+    });
+    // berries: 0.5 + 2*0.25 = 1.0 -> 1 lost, carry 0; fish: 5*0.5 = 2.5 -> 2 lost, carry 0.5.
+    expect(day2.inventory).toEqual({ berries: 1, fish: 3 });
+    expect(day2.spoilageCarry).toEqual({ fish: 0.5 });
+    expect(day2.spoiled).toEqual({ berries: 1, fish: 2 });
+  });
+
+  it('progresses 5 starvation debuff stages, reaches abandoned at 0 maxPop, and recovers when fed', () => {
+    expect(STARVATION_DEBUFF_STAGES.map((s) => s.efficiencyPenalty)).toEqual([0, 0.1, 0.3, 0.5, 0.8, 0.8]);
+
+    let s = advanceStarvationState({ hasDeficit: true, buildingMaxPop: 10, elapsedDays: 1 });
+    expect(s.stage.id).toBe('hunger_1');
+    expect(s.efficiencyPenalty).toBe(0.1);
+
+    s = advanceStarvationState({ ...s, hasDeficit: true, buildingMaxPop: 10, elapsedDays: 1 });
+    expect(s.stage.id).toBe('hunger_2');
+    expect(s.efficiencyPenalty).toBe(0.3);
+
+    s = advanceStarvationState({ ...s, hasDeficit: true, buildingMaxPop: 10, elapsedDays: 1 });
+    expect(s.stage.id).toBe('hunger_3');
+    expect(s.efficiencyPenalty).toBe(0.5);
+
+    s = advanceStarvationState({ ...s, hasDeficit: true, buildingMaxPop: 10, elapsedDays: 1 });
+    expect(s.stage.id).toBe('sickness');
+    expect(s.efficiencyPenalty).toBe(0.8);
+    expect(s.effectiveMaxPop).toBe(10);
+
+    // Day 5 Death: -10% maxPop (-1 out of 10) while holding 80% penalty.
+    s = advanceStarvationState({ ...s, hasDeficit: true, buildingMaxPop: 10, elapsedDays: 1 });
+    expect(s.stage.id).toBe('death');
+    expect(s.efficiencyPenalty).toBe(0.8);
+    expect(s.starvationPopLoss).toBe(1);
+    expect(s.effectiveMaxPop).toBe(9);
+
+    // Fed recovery: +20% efficiency/day, +10% maxPop/day -> fully restored after 4 fed days.
+    const fed1 = advanceStarvationState({ ...s, hasDeficit: false, buildingMaxPop: 10, elapsedDays: 1 });
+    expect(fed1.efficiencyPenalty).toBe(0.6);
+    expect(fed1.starvationPopLoss).toBe(0);
+    expect(fed1.effectiveMaxPop).toBe(10);
+
+    const fedFull = advanceStarvationState({ ...fed1, hasDeficit: false, buildingMaxPop: 10, elapsedDays: 3 });
+    expect(fedFull.efficiencyPenalty).toBe(0);
+    expect(fedFull.starvationDays).toBe(0);
+    expect(fedFull.stage.id).toBe('healthy');
+    expect(getStarvationStageInfo(fedFull).label).toBe('Healthy');
+
+    // Prolonged famine collapses maxPop to 0 -> abandoned village.
+    const abandoned = advanceStarvationState({ hasDeficit: true, buildingMaxPop: 10, elapsedDays: 14 });
+    expect(abandoned.isAbandoned).toBe(true);
+    expect(abandoned.effectiveMaxPop).toBe(0);
+    expect(abandoned.stage.id).toBe('abandoned');
+  });
+
+  it('slows unit/build timers and reduces yields/water when efficiencyPenalty > 0', () => {
+    const healthyBuild = calculateBuildTimestamps({
+      to: { x: 14, y: 12 },
+      buildingId: 'firepit',
+      nowMs: 0,
+      efficiencyPenalty: 0,
+    });
+    const hunger3Build = calculateBuildTimestamps({
+      to: { x: 14, y: 12 },
+      buildingId: 'firepit',
+      nowMs: 0,
+      efficiencyPenalty: 0.5,
+    });
+    expect(hunger3Build.buildMs).toBe(healthyBuild.buildMs * 2);
+
+    const healthyTeam = calculateTeamActionTimestamps({
+      to: { x: 14, y: 12 },
+      units: { gatherer: 1 },
+      nowMs: 0,
+      efficiencyPenalty: 0,
+    });
+    const sickTeam = calculateTeamActionTimestamps({
+      to: { x: 14, y: 12 },
+      units: { gatherer: 1 },
+      nowMs: 0,
+      efficiencyPenalty: 0.8,
+    });
+    expect(sickTeam.workMs).toBe(healthyTeam.workMs * 5);
+
+    const sickWater = rollTileActionYield({
+      unitId: 'gatherer',
+      action: 'collect_water',
+      tile: { isWater: true, forestDensity: 0 },
+      efficiencyPenalty: 0.8,
+      rng: createPrng(1),
+    });
+    expect(sickWater.waterBowls).toBe(2);
   });
 });

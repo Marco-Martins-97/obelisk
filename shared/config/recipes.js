@@ -12,6 +12,7 @@
  * @param {Record<string, number>} config.inputs - Consumed resource quantities.
  * @param {Record<string, number>} config.outputs - Produced resource quantities.
  * @param {number} config.craftTimeHours - Processing duration in in-game hours.
+ * @param {number} [config.waterCostBowls=0] - Water reserve bowls consumed per craft batch.
  * @param {string} [config.age='stone'] - Tech age of the recipe.
  * @param {number} [config.minBuildingLevel=1] - Minimum building level needed.
  * @param {string | null} [config.unlocksAge=null] - Age unlocked on completion (if any).
@@ -35,6 +36,11 @@ export function createRecipe(config) {
     throw new RangeError(`Recipe "${config.id}" craftTimeHours must be > 0.`);
   }
 
+  const waterCostBowls = config.waterCostBowls ?? 0;
+  if (!Number.isFinite(waterCostBowls) || waterCostBowls < 0) {
+    throw new RangeError(`Recipe "${config.id}" waterCostBowls must be >= 0.`);
+  }
+
   return Object.freeze({
     id: config.id,
     name: config.name,
@@ -42,6 +48,7 @@ export function createRecipe(config) {
     buildingId: config.buildingId,
     minBuildingLevel: config.minBuildingLevel ?? 1,
     inputs: Object.freeze({ ...config.inputs }),
+    waterCostBowls,
     outputs: Object.freeze({ ...config.outputs }),
     craftTimeHours: config.craftTimeHours,
     unlocksAge: config.unlocksAge ?? null,
@@ -69,6 +76,52 @@ export const RECIPES = Object.freeze({
     outputs: { cooked_fish: 1 },
     craftTimeHours: 0.4,
     description: 'Grill caught river or lake fish over the firepit.',
+  }),
+  boil_salt: createRecipe({
+    id: 'boil_salt',
+    name: 'Boil Salt',
+    buildingId: 'firepit',
+    inputs: { sticks: 2 },
+    waterCostBowls: 10,
+    outputs: { salt: 2 },
+    craftTimeHours: 1.0,
+    description: 'Boil village water over a firepit to crystallize edible salt.',
+  }),
+  dry_meat: createRecipe({
+    id: 'dry_meat',
+    name: 'Dry Meat',
+    buildingId: 'drying_rack',
+    inputs: { meat: 1 },
+    outputs: { dried_meat: 1 },
+    craftTimeHours: 1.0,
+    description: 'Air-dry raw meat on racks to cut daily spoilage without salt.',
+  }),
+  dry_fish: createRecipe({
+    id: 'dry_fish',
+    name: 'Dry Fish',
+    buildingId: 'drying_rack',
+    inputs: { fish: 1 },
+    outputs: { dried_fish: 1 },
+    craftTimeHours: 0.8,
+    description: 'Air-dry raw fish on racks to reduce daily spoilage without salt.',
+  }),
+  salt_meat: createRecipe({
+    id: 'salt_meat',
+    name: 'Salt Meat',
+    buildingId: 'drying_rack',
+    inputs: { meat: 1, salt: 1 },
+    outputs: { salted_meat: 1 },
+    craftTimeHours: 1.2,
+    description: 'Salt-cure raw meat for very long-lasting stored provisions.',
+  }),
+  salt_fish: createRecipe({
+    id: 'salt_fish',
+    name: 'Salt Fish',
+    buildingId: 'drying_rack',
+    inputs: { fish: 1, salt: 1 },
+    outputs: { salted_fish: 1 },
+    craftTimeHours: 1.0,
+    description: 'Salt-cure raw fish for very long-lasting stored provisions.',
   }),
   craft_charcoal: createRecipe({
     id: 'craft_charcoal',

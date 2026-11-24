@@ -60,9 +60,11 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(onlineLink).toHaveAttribute('aria-current', 'page');
 
     expect(screen.queryByRole('button', { name: 'Dev' })).not.toBeInTheDocument();
-    expect(screen.getByText('50/250')).toBeInTheDocument();
+    expect(screen.getByText('60/250')).toBeInTheDocument();
     expect(screen.getByText('5/10')).toBeInTheDocument();
     expect(screen.getByText('0/10')).toBeInTheDocument();
+    expect(screen.getByLabelText('Village survival status')).toHaveTextContent('Healthy');
+    expect(screen.queryByRole('button', { name: /Eat \+/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText('In-game calendar')).toHaveTextContent(/-?\d+°C/);
 
     // Small continent panel removed; right sidebar starts directly with Active Timers -> Units -> Stockpile -> Techs.
@@ -73,7 +75,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(h3Titles).toEqual([
       'Active Timers (0)',
       'Units (Free / Total)',
-      'Stockpile (3 types)',
+      'Stockpile (4 types)',
       'Unlocked Technologies',
       'Village Log',
     ]);
@@ -117,10 +119,10 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     fireEvent.change(speedSelect, { target: { value: '3600' } });
     expect(speedSelect.value).toBe('3600');
 
-    // Discard 2 Sticks -> 50/250 -> 46/250.
+    // Discard 2 Sticks -> 60/250 -> 56/250.
     fireEvent.change(screen.getByLabelText('Remove amount for Sticks'), { target: { value: '2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Remove Sticks' }));
-    expect(screen.getByText('46/250')).toBeInTheDocument();
+    expect(screen.getByText('56/250')).toBeInTheDocument();
 
     // Left-click Main (12, 12) -> verify Upgrade to Level 2 exists, train 2 Gatherers, 1 Hunter, 1 Builder.
     const territoryCanvas = screen.getByLabelText('Territory Map Canvas');
@@ -151,9 +153,11 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(screen.getByRole('menuitem', { name: 'Hunt' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('menuitem', { name: /Build/i }));
-    expect(screen.getByRole('button', { name: /Firepit/i })).toHaveAttribute('data-build-status', 'ready');
-    expect(screen.getByRole('button', { name: /House/i })).toHaveAttribute('data-build-status', 'grey');
-    expect(screen.getByRole('button', { name: /Clay Kiln/i })).toHaveAttribute('data-build-status', 'red');
+    expect(screen.getByRole('button', { name: /^Firepit/i })).toHaveAttribute('data-build-status', 'ready');
+    expect(screen.getByRole('button', { name: /^House/i })).toHaveAttribute('data-build-status', 'grey');
+    expect(screen.getByRole('button', { name: /^Warehouse/i })).toHaveAttribute('data-build-status', 'grey');
+    expect(screen.getByRole('button', { name: /^Drying Rack/i })).toHaveAttribute('data-build-status', 'red');
+    expect(screen.getByRole('button', { name: /^Clay Kiln/i })).toHaveAttribute('data-build-status', 'red');
 
     // Open [Team >], click All on gatherers -> 2G + 1H, Send Team -> h:m:s + Traveling phase.
     fireEvent.click(screen.getByRole('menuitem', { name: /Team/i }));

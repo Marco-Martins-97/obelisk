@@ -209,6 +209,7 @@ function PlayableVillageWorkspace({
           buildingOptions={menuBuildingOptions}
           freeUnits={village.freeUnits}
           isExplored={menuIsExplored}
+          isAbandoned={Boolean(village.state.isAbandoned)}
           onClose={() => setTileMenu(null)}
           onDispatchAction={(action, units) =>
             village.dispatchTileAction({ action, x: tileMenu.x, y: tileMenu.y, units })

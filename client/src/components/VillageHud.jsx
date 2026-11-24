@@ -24,12 +24,22 @@ const TEAM_MARKER_STYLES = {
   builder: 'bg-amber-300',
 };
 
+const STAGE_BADGE_STYLES = {
+  ok: 'border-emerald-700/60 bg-emerald-950/60 text-emerald-300',
+  caution: 'border-amber-600/60 bg-amber-950/60 text-amber-300',
+  warning: 'border-orange-600/60 bg-orange-950/60 text-orange-300',
+  danger: 'border-rose-600/70 bg-rose-950/70 text-rose-300',
+  critical: 'border-red-600 bg-red-950/80 text-red-200',
+  abandoned: 'border-red-500 bg-red-950 text-red-200 font-bold',
+};
+
 /**
  * Sticky village resource & Age status bar rendered right below the TopNavbar
  * (or below MapControls on the Sandbox page).
  *
  * @param {object} props
  * @param {object} props.village
+ * @param {{ x: number, y: number } | null} [props.spawnTile]
  * @param {(building: object) => void} props.onOpenBuilding
  * @returns {import('react').JSX.Element}
  */
@@ -39,12 +49,22 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding }) {
     mainBuilding,
     storageUsed,
     storageCapacity,
+    storedFood,
     waterCapacity,
     maxPop,
     popUsed,
+    starvationStage,
   } = village;
 
   const currentAgeName = AGES[(mainBuilding?.tier ?? 1) - 1] ?? 'stone';
+  const stage = starvationStage ?? {
+    id: 'healthy',
+    label: 'Healthy',
+    efficiencyPenalty: 0,
+    severity: 'ok',
+  };
+  const penaltyPct = Math.round((stage.efficiencyPenalty ?? 0) * 100);
+  const formattedFood = Number.isInteger(storedFood) ? storedFood : Number(storedFood ?? 0).toFixed(1);
 
   return (
     <section
@@ -61,6 +81,15 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding }) {
               World ({spawnTile.x}, {spawnTile.y})
             </span>
           )}
+          <span
+            aria-label="Village survival status"
+            className={`rounded border px-2 py-0.5 font-mono text-[11px] ${
+              STAGE_BADGE_STYLES[stage.severity] ?? STAGE_BADGE_STYLES.ok
+            }`}
+          >
+            {stage.label}
+            {penaltyPct > 0 ? ` (-${penaltyPct}% eff)` : ''}
+          </span>
           <button
             type="button"
             onClick={() => mainBuilding && onOpenBuilding(mainBuilding)}
@@ -78,7 +107,7 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding }) {
             </strong>
           </span>
           <span className="text-slate-200">
-            Food: <strong className="text-emerald-300">{state.food}</strong>
+            Food: <strong className="text-emerald-300">{formattedFood}</strong>
           </span>
           <span className="text-slate-200">
             Water:{' '}
@@ -94,6 +123,16 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding }) {
           </span>
         </div>
       </div>
+
+      {state.isAbandoned && (
+        <div
+          role="alert"
+          className="mx-auto mt-2 max-w-7xl rounded border border-red-700/80 bg-red-950/75 px-3 py-1.5 text-[11px] text-red-200"
+        >
+          <strong>Abandoned Village:</strong> Maximum population fell to 0 after prolonged famine or
+          dehydration. Click <strong>Reset Village</strong> to start a fresh settlement.
+        </div>
+      )}
     </section>
   );
 }
@@ -110,7 +149,7 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding }) {
  * @returns {import('react').JSX.Element}
  */
 export function VillageSidebarPanels({ village }) {
-  const { state, freeUnits, consumeEdibleFood, removeResource } = village;
+  const { state, freeUnits, removeResource } = village;
   const [discardAmounts, setDiscardAmounts] = useState({});
 
   const inventoryItems = Object.entries(state.inventory).filter(([, qty]) => qty > 0);
@@ -243,25 +282,26 @@ export function VillageSidebarPanels({ village }) {
                   key={id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5 text-slate-200"
                 >
-                  <span>
-                    {res?.name ?? id}: <strong>{qty}</strong>
-                  </span>
+                  <div className="flex flex-col">
+                    <span>
+                      {res?.name ?? id}: <strong>{qty}</strong>
+                    </span>
+                    {(res?.edible || res?.spoilRatePerDay > 0) && (
+                      <span className="text-[10px] text-slate-400">
+                        {res?.edible ? `+${res.foodValue} food` : 'Raw'}
+                        {res?.spoilRatePerDay > 0
+                          ? ` · -${Math.round(res.spoilRatePerDay * 100)}%/d spoil`
+                          : ''}
+                      </span>
+                    )}
+                  </div>
 
                   <div className="flex items-center gap-1">
-                    {res?.edible && (
-                      <button
-                        type="button"
-                        onClick={() => consumeEdibleFood(id)}
-                        className="rounded bg-emerald-700/80 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-600"
-                      >
-                        Eat +{res.foodValue}
-                      </button>
-                    )}
-
                     <input
                       type="number"
                       min={1}
                       max={qty}
+                      disabled={Boolean(state.isAbandoned)}
                       value={clampedAmt}
                       aria-label={`Remove amount for ${res?.name ?? id}`}
                       onChange={(e) =>
@@ -270,16 +310,17 @@ export function VillageSidebarPanels({ village }) {
                           [id]: Number(e.target.value) || 1,
                         }))
                       }
-                      className="w-12 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-center text-[10px] text-slate-100"
+                      className="w-12 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-center text-[10px] text-slate-100 disabled:opacity-40"
                     />
                     <button
                       type="button"
+                      disabled={Boolean(state.isAbandoned)}
                       aria-label={`Remove ${res?.name ?? id}`}
                       onClick={() => {
                         removeResource(id, clampedAmt);
                         setDiscardAmounts((prev) => ({ ...prev, [id]: 1 }));
                       }}
-                      className="rounded border border-rose-700/70 bg-rose-950/60 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-900/70"
+                      className="rounded border border-rose-700/70 bg-rose-950/60 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-900/70 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Remove
                     </button>
