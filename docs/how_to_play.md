@@ -1,5 +1,7 @@
 # How to Play Obelisk (Stone Age Guide)
 
+> **Desktop Browser Notice:** Obelisk is built for Desktop web browsers (left/right-click canvas actions, hover tooltips, scroll-wheel zoom). Mobile/phone touch browsers are not fully supported.
+
 ## 1. Starting Your Village
 You begin at **(12, 12)** inside your `25×25` Territory with:
 - **Main Village Hall (Lv 1, Stone Age):** Stores `250` bulk, `10` max pop (`0/10` used), and `10` water bowls (`5/10` starting water).
@@ -38,11 +40,11 @@ Running short on food or water triggers sequential daily debuffs:
 - **Day 2 — Hunger II:** `-30%` efficiency penalty.
 - **Day 3 — Hunger III:** `-50%` efficiency penalty.
 - **Day 4 — Sickness:** `-80%` efficiency penalty.
-- **Day 5+ — Death:** `-80%` efficiency penalty **and `-10%` max population per day** (casualties are balanced across unit types rather than wiping one role out). If max population hits `0`, the village becomes **Abandoned** (Click **Reset Save** to restart).
+- **Day 5+ — Death:** `-80%` efficiency penalty **and `-10%` max population per day** (whole-unit casualties start from whichever unit type has the most population so no single role is unfairly erased, and never kill half-units). If max population hits `0`, the village becomes **Abandoned** (Click **Reset Save** to restart).
 - **Recovery:** Each fully fed and hydrated day restores **`+20%` efficiency** and **`+10%` max population**.
 
 ---
 
 ## 5. Building Material Roles & Copper Age Goal
-- **Basic Materials (`Sticks`, `Pelts`, `Straw`):** **Main Hall** upgrades (`+250` pooled storage, `+10` max pop, `+10` water bowls per level), **House** (`+10` max pop/lv), **Warehouse** (`+250` pooled storage/lv), and **Drying Rack**.
+- **Basic Materials (`Sticks`, `Pelts`, `Straw`):** **Main Hall** upgrades (`+250` pooled storage, `+10` max pop, and `10 / 25 / 50` water bowls across Lv 1 / 2 / 3), **House** (`+10` max pop/lv), **Warehouse** (`+250` pooled storage/lv), and **Drying Rack**.
 - **Stone Buildings (`Small Stones` + `Clay`):** **Firepit** (cooks, boils salt, researches **Stone Tools**) and **Clay Kiln** (crafts **Charcoal** and smelts **`10` Copper Nuggets + `2` Charcoal → `1` Copper Ingot**, unlocking Copper Age).

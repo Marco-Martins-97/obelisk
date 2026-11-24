@@ -28,7 +28,8 @@
  * @param {number} [config.preservedStorageBonusPerLevel=0] - Preserved food bulk capacity added per level (future Granary/Root Cellar).
  * @param {number} [config.spoilageMultiplier=1] - Spoilage multiplier (e.g., 0.4 = -60%) inside preserved storage.
  * @param {number} [config.popBonusPerLevel=0] - Max population slots added per level.
- * @param {number} [config.waterCapacity=0] - Dedicated water storage capacity in bowls.
+ * @param {number} [config.waterCapacity=0] - Dedicated base water storage capacity in bowls.
+ * @param {number[] | null} [config.waterCapacityByLevel=null] - Explicit per-level water bowl totals (overrides linear scaling).
  * @param {string[]} [config.trainsUnits=[]] - Unit IDs trainable inside this building.
  * @param {string[]} [config.craftsRecipes=[]] - Recipe IDs craftable inside this building.
  * @param {string} [config.description=''] - Short summary shown in UI tooltips.
@@ -98,6 +99,9 @@ export function createBuilding(config) {
     spoilageMultiplier,
     popBonusPerLevel: config.popBonusPerLevel ?? 0,
     waterCapacity: config.waterCapacity ?? 0,
+    waterCapacityByLevel: Array.isArray(config.waterCapacityByLevel)
+      ? Object.freeze([...config.waterCapacityByLevel])
+      : null,
     trainsUnits: Object.freeze([...(config.trainsUnits ?? [])]),
     craftsRecipes: Object.freeze([...(config.craftsRecipes ?? [])]),
     description: config.description ?? '',
@@ -129,9 +133,10 @@ export const BUILDINGS = Object.freeze({
     storageBonusPerLevel: 250,
     popBonusPerLevel: 10,
     waterCapacity: 10,
+    waterCapacityByLevel: [10, 25, 50],
     trainsUnits: ['gatherer', 'hunter', 'builder'],
     description:
-      'Central village Age controller scaling storage (+250/lv), housing (+10/lv), water (+10 bowls/lv), and unit training.',
+      'Central village Age controller scaling storage (+250/lv), housing (+10/lv), water (10/25/50 bowls), and unit training.',
   }),
   firepit: createBuilding({
     id: 'firepit',

@@ -173,23 +173,33 @@ export default function BuildingModal({
           </div>
 
           <p className="mt-3 text-xs text-slate-300">{def.description}</p>
-          {(def.storageBonusPerLevel > 0 || def.popBonusPerLevel > 0 || def.waterCapacity > 0) && (
-            <p className="mt-1 font-mono text-[11px] text-emerald-300">
-              {[
-                def.storageBonusPerLevel > 0
-                  ? `Pooled Storage Bonus: +${def.storageBonusPerLevel * building.level} bulk`
-                  : null,
-                def.popBonusPerLevel > 0
-                  ? `Housing Bonus: +${def.popBonusPerLevel * building.level} max pop`
-                  : null,
-                def.waterCapacity > 0
-                  ? `Water Storage Bonus: +${def.waterCapacity * building.level} bowls`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </p>
-          )}
+          {(() => {
+            const waterBonus =
+              Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0
+                ? def.waterCapacityByLevel[
+                    Math.min(
+                      Math.max(1, building.level ?? 1) - 1,
+                      def.waterCapacityByLevel.length - 1,
+                    )
+                  ]
+                : def.waterCapacity * building.level;
+
+            const bonusParts = [
+              def.storageBonusPerLevel > 0
+                ? `Pooled Storage Bonus: +${def.storageBonusPerLevel * building.level} bulk`
+                : null,
+              def.popBonusPerLevel > 0
+                ? `Housing Bonus: +${def.popBonusPerLevel * building.level} max pop`
+                : null,
+              waterBonus > 0 ? `Water Storage Bonus: +${waterBonus} bowls` : null,
+            ].filter(Boolean);
+
+            return bonusParts.length > 0 ? (
+              <p className="mt-1 font-mono text-[11px] text-emerald-300">
+                {bonusParts.join(' · ')}
+              </p>
+            ) : null;
+          })()}
 
           {building.status === 'constructing' ? (
             <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs">

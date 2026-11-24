@@ -2,7 +2,8 @@
 
 > **An asynchronous, browser-based MMORTS** combining *Tribal Wars*-style world exploration and marketplace trading with *TerraFirmaCraft*-inspired geological scarcity, prospecting, and seasonal survival.
 
-**Current Version:** `v0.2.0` *(Stages 0–3 Complete — Stone Age Playable Vertical Slice, Tech Tree, Team Dispatch & Online/Sandbox UI)*  
+**Current Version:** `v0.3.0` *(Stages 0–3 Complete — Stone Age Survival, Storage Pooling, Drying/Salt, Debuffs, Offline 6× Mode & Guide)*  
+**Platform Note:** Built for **Desktop web browsers** (left/right-click context menus, tile hover tooltips, and scroll-wheel map zoom); some interactions do not work on phones or small touch screens yet.  
 **Tech Stack:** React 19 · React Router 8 · Vite 8 · Tailwind CSS v4 · Pure ES6+ ESM Workspaces · Vitest · ESLint *(Backend Stage 5+: Node.js, Express, MongoDB, Socket.io, BullMQ)*
 
 ---
@@ -21,16 +22,13 @@
 
 ### 3. Procedural Geology, Hydrology & Prospecting
 - **Continent (`generateContinent`):**
-  - Elevation bands (`Ocean < 0.38`, `Buildable Land 0.38–0.78`, `Mountain >= 0.78`).
-  - North-to-south latitude temperature gradient with elevation cooling.
-  - **Domain-Warped Voronoi Stone Provinces:** Guarantees all 7 stone types (`limestone`, `shale`, `granite`, `gabbro`, `basalt`, `slate`, `marble`) generate organically across the continent.
+  - Full-range `[0, 1]` rescaled elevation & moisture fields (`Ocean < 0.38`, `Buildable Land 0.38–0.78`, `Mountain >= 0.78`) and **Celsius ambient temperature (`-20°C` to `+40°C`)** adjusted by latitude, elevation, season, and day/night.
+  - **Domain-Warped Voronoi Stone Provinces:** Guarantees all 7 stone types (`limestone`, `shale`, `granite`, `gabbro`, `basalt`, `slate`, `marble`, plus Copper Age `salt` in `limestone`/`shale`) generate organically across the continent.
   - **1** deterministic Obelisk placed on a buildable land tile.
 - **Territory (`generateTerritory`):**
-  - Neighbor-interpolated elevation and temperature.
-  - Local lakes and downhill rivers with a **minimum 1 water tile** (`spring` fallback) guarantee.
-  - **Multi-Source BFS Moisture:** Computed from exact grid distance to local Territory water tiles.
-  - **Rarity-Scaled Ore Prospecting:** Instead of pre-spawning ore nodes, each ore hosted by the tile's `rockType` generates an independent `[0, 1]` density field (`common` → broad veins, `very_rare` → small concentrated pockets) for prospector teams to triangulate.
-  - **Guaranteed Forest & Settlement Zone:** Reserves a clear `7×7` central buildable footprint and guarantees `>= 1` forest tile.
+  - Neighbor-interpolated elevation (`>= SEA_LEVEL` floor enforced on all land territories so coastlines remain cleanly buildable) and temperature.
+  - Local lakes and downhill rivers with a **minimum 1 water tile** (`spring` fallback) guarantee, plus **rarity & host-rock weighted ore nugget panning** (`2×` bonus when present in the local `rockType`; excludes `flux`, `coal`, `salt`).
+  - **Multi-Source BFS Moisture & Guaranteed `7×7` Settlement Zone:** At least 1 forest tile preserved outside the starter center.
 
 ### 4. High-Performance HTML5 Canvas Viewport (`/client`)
 - **Viewport Frustum Culling (`getVisibleTileRange`):** Renders only on-screen tiles `+ 1` tile margin, keeping draw cost bounded by screen pixels regardless of map size, paired with clamped pan and cursor-anchored zoom.
@@ -38,12 +36,13 @@
   - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, water, forest canopies, placed buildings (`BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
   - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and dynamic per-ore layers), `10×` local contrast amplification on Territory gradients, an **Unbuildable (60% Red)** overlay toggle, and hex `tileSeed` inspection.
 
-### 5. Stone Age Playable Loop, Tech Tree & Team Dispatch (`/shared` & `/client`)
-- **`Online (/)` vs. `Sandbox (/sandbox)` Routes:** Sticky top `TopNavbar` (`react-router`) with `1×–3600×` speed control, sticky `VillageHeaderBar` (`Age · Main Tier · Level`, `World (x, y)`, `Storage`, `Food`, `Water`, `Pop`), full-size `672×672` **Territory ↔ Continent** map toggling, right-sidebar panels (**Active Timers → Units → Stockpile → Unlocked Technologies**), and bottom **Village Log**.
-- **Strict Online Fog of War:** Territory starts at `7×7` explored and Continent starts at `1` village tile; Online hover tooltips show coordinates `(x, y)` only, while right-click tile commands (`1px` black outline) expand the `3×3` Fog frontier once returning teams/builders arrive back at `MAIN`.
-- **`MAIN` Age Controller & Level Upgrades:** `MAIN` Tier (`1..5`) controls village Age (free downgrade / normal-material upgrade after `copper_age`), while building Levels (`1..3`) expand storage (`+250/lv`) and population capacity (`+10/lv`).
-- **Player-Persistent Technology Tree ([shared/config/technologies.js](./shared/config/technologies.js)):** Tools (`wood_tools` → `stone_tools`) are researched permanently rather than stored in inventory, auto-applying the highest unlocked tier (`+20%` work speed, `+1` max loot, `-50%` empty roll weight).
-- **Multi-Unit Team Dispatch & `HH:MM:SS` Phase Timers:** Right-click menus provide quick `[Gather 0 - 1 + All]`, `[Hunt 0 - 1 + All]`, `[Collect Water 0 - 1 + All]`, and `[Team >]` Smart Role Assignment marching at slowest unit speed across `Traveling → Working → Returning` phases.
+### 5. Stone Age Playable Loop, Survival, Storage & Offline Mode (`/shared` & `/client`)
+- **`Offline (/)` vs. `Sandbox (/sandbox)` Routes:** Sticky top `TopNavbar` (`react-router`) switches between **Offline (`/`)** (fixed `6×` simulation speed until the backend server releases, with in-game Celsius temperature and a built-in **How to Play** modal) and **Sandbox (`/sandbox`)** (`1×–3600×` speed selector + Dev overlays).
+- **Fixed-Height Scrollable Sidebar & Real-Time Active Timers:** Right sidebar houses fixed-height scrollable **Active Timers** (showing real-time wall-clock `Conclusion: HH:MM:SS` end timestamps and real countdowns for `Traveling → Working → Returning`), **Units**, fixed-height scrollable **Stockpile** (`spoilRatePerDay` badges + custom discard), and **Unlocked Technologies**.
+- **Strict Fog of War:** Territory starts at `7×7` explored and Continent starts at `1` village tile; Offline hover tooltips show coordinates `(x, y)` only, expanding the `3×3` frontier once returning teams/builders arrive back at `MAIN`.
+- **`MAIN` Age Controller, Buildings & Material Split:** `MAIN` Tier (`1..5`) controls village Age, while Levels (`1..3`) scale pooled storage (`+250/lv`), population (`+10/lv`), and `MAIN` water storage (`10 / 25 / 50` bowls across Lv `1..3`). Basic structures (**Main**, **House**, **Warehouse**, **Drying Rack**) use basic materials (`sticks`, `pelts`, `straw`), while **Firepit** and **Clay Kiln** require `small_stones`.
+- **FEFO Auto-Feeding, Fractional Spoilage (`S1`), Salt (`Salt-A`) & 5-Stage Starvation Debuffs:** Active `popUsed` consumes `1 food + 1 water bowl` per day automatically in **fastest-spoiling-first (`FEFO`)** order with multi-ration `foodCarry`; leftovers accumulate per-type fractional spoilage (`spoilageCarry`). **Firepit** boils water into **Salt** (`2 sticks + 10 water bowls -> 2 salt`) for **Drying Rack** cured rations (`1–6%/d` spoil). Ration deficits progress through **Hunger I (-10%) → Hunger II (-30%) → Hunger III (-50%) → Sickness (-80%) → Death (-80% + -10% maxPop/day)** with balanced highest-pop whole-unit casualties until **Abandoned** at `0` maxPop, recovering **`+20%` efficiency** and **`+10%` maxPop/day** when fed.
+- **Player-Persistent Technology Tree ([shared/config/technologies.js](./shared/config/technologies.js)):** Tools (`wood_tools` → `stone_tools`) are researched permanently rather than stored in inventory, auto-applying `+20%` work speed, `+1` max loot, and `-50%` empty roll weight.
 
 ---
 
@@ -62,7 +61,8 @@ Obelisk/
 │   ├── utils/               # stoneAgeMath.js (calendar, timers, yields, fog math, tech & tier rules)
 │   └── tests/               # Vitest determinism, invariant, Stone Age, and benchmark suites
 ├── server/                  # @obelisk/server — Backend workspace (Stage 5+)
-├── docs/                    # Tracked domain specifications
+├── docs/                    # Tracked domain specifications & player guide
+│   ├── how_to_play.md
 │   ├── architecture_spec.md
 │   ├── world_spec.md
 │   ├── building_spec.md
@@ -81,13 +81,13 @@ Obelisk/
 # 1. Install workspace dependencies from the repository root
 npm install
 
-# 2. Run all unit & UI component tests (44 tests across 7 suites)
+# 2. Run all unit & UI component tests (52 tests across 7 suites)
 npm test
 
 # 3. Run ESLint across shared, client, and server
 npm run lint
 
-# 4. Launch the client locally (Online + Sandbox views)
+# 4. Launch the client locally (Offline + Sandbox views)
 npm run dev:client
 
 # 5. Build production frontend bundle
@@ -103,7 +103,7 @@ npm run build:client
 | **Stage 0** | Monorepo workspaces, Vitest, ESLint (`Math.random` ban), Vite + Tailwind v4 | Complete |
 | **Stage 1** | Deterministic `100×100` Continent & `25×25` Territory generators (`/shared`) | Complete |
 | **Stage 2** | Interactive Gameplay/Dev Canvas Map Visualizer & frustum culling (`/client`) | Complete |
-| **Stage 3** | Stone Age playable vertical slice, Tech Tree, Team dispatch, Fog UI & Online/Sandbox split | Complete (`v0.2.0`) |
+| **Stage 3** | Stone Age survival vertical slice: Tech Tree, Warehouse, Drying Rack, Salt, FEFO/Spoilage, Debuffs & Offline/Sandbox UI | Complete (`v0.3.0`) |
 | **Stage 4** | Copper & Bronze Ages: surface mines, tool splits, alloying, marketplace caravans | Planned |
 | **Stage 5** | Express API, MongoDB sparse deltas, auth, authoritative Fog of War enforcement (`/server`) | Planned |
 | **Stage 6** | Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk | Planned |

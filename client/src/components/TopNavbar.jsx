@@ -201,10 +201,14 @@ export default function TopNavbar({
                   <strong>Main</strong>, <strong>House</strong>, <strong>Warehouse</strong>, and{' '}
                   <strong>Drying Rack</strong> build from basic materials (Sticks, Pelts, Straw),
                   while <strong>Firepit</strong> and <strong>Clay Kiln</strong> require Small Stones.
-                  Upgrading Main adds +250 storage, +10 max pop, and +10 water bowls per level. Research{' '}
-                  <strong>Stone Tools</strong> at Firepit, pan rivers for{' '}
+                  Upgrading Main adds +250 storage, +10 max pop, and scales water bowls (10 / 25 /
+                  50). Research <strong>Stone Tools</strong> at Firepit, pan rivers for{' '}
                   <strong>Copper Nuggets</strong>, and smelt a <strong>Copper Ingot</strong> at the
                   Kiln to unlock Copper Age.
+                </p>
+                <p className="mt-1 text-[11px] text-amber-300">
+                  Desktop Note: Built for Desktop mouse controls (left/right-click menus &amp; wheel
+                  zoom); mobile/phone touch browsers are not fully supported yet.
                 </p>
               </section>
             </div>

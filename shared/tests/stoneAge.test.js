@@ -796,19 +796,25 @@ describe('Storage pooling (M1), FEFO auto-eating (C1), fractional spoilage (S1),
     expect(BUILDINGS.kiln.cost.small_stones).toBeGreaterThan(0);
 
     expect(calculateWaterCapacity([{ buildingId: 'main', level: 1, status: 'active' }])).toBe(10);
-    expect(calculateWaterCapacity([{ buildingId: 'main', level: 2, status: 'active' }])).toBe(20);
-    expect(calculateWaterCapacity([{ buildingId: 'main', level: 3, status: 'active' }])).toBe(30);
+    expect(calculateWaterCapacity([{ buildingId: 'main', level: 2, status: 'active' }])).toBe(25);
+    expect(calculateWaterCapacity([{ buildingId: 'main', level: 3, status: 'active' }])).toBe(50);
 
-    // Balanced starvation casualties: never wipes out all Hunters/Gatherers first while another role has > 1.
-    const step1 = trimUnitsBalanced({ gatherer: 2, hunter: 2, builder: 1 }, 1);
-    expect(step1.units).toEqual({ gatherer: 2, hunter: 1, builder: 1 });
-    expect(step1.trimmedTotal).toBe(1);
+    // Highest-pop equal casualty splitting matching exact multi-day progression and whole-unit kills.
+    const seq1 = trimUnitsBalanced({ gatherer: 13, hunter: 7, builder: 2 }, 4);
+    expect(seq1.units).toEqual({ gatherer: 9, hunter: 7, builder: 2 });
 
-    const step2 = trimUnitsBalanced(step1.units, 1);
-    expect(step2.units).toEqual({ gatherer: 1, hunter: 1, builder: 1 });
+    const seq2 = trimUnitsBalanced(seq1.units, 5);
+    expect(seq2.units).toEqual({ gatherer: 5, hunter: 6, builder: 2 });
 
-    // Once all roles are down to 1, keeps the last Gatherer alive longest.
-    const step3 = trimUnitsBalanced(step2.units, 2);
-    expect(step3.units).toEqual({ gatherer: 1, hunter: 0, builder: 0 });
+    const seq3 = trimUnitsBalanced({ gatherer: 3, hunter: 2, builder: 2 }, 5);
+    expect(seq3.units).toEqual({ gatherer: 0, hunter: 1, builder: 1 });
+
+    // Multi-pop unit (popCost = 2) kills a full unit (never half) and reduces excess demand by 2.
+    const heavyExact = trimUnitsBalanced({ heavy: 2, gatherer: 1 }, 2, { heavy: 2, gatherer: 1 });
+    expect(heavyExact.units).toEqual({ heavy: 1, gatherer: 1 });
+
+    const heavyOnly = trimUnitsBalanced({ heavy: 2 }, 1, { heavy: 2 });
+    expect(heavyOnly.units).toEqual({ heavy: 1 });
+    expect(heavyOnly.trimmedTotal).toBe(1);
   });
 });

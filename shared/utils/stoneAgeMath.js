@@ -569,7 +569,8 @@ export function advanceStarvationState({
 }
 
 /**
- * Calculates total village water bowl storage across all active buildings (Main scales +10/lv).
+ * Calculates total village water bowl storage across all active buildings
+ * (Main provides 10 / 25 / 50 bowls across Lv 1 / 2 / 3 via `waterCapacityByLevel`).
  *
  * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.
  * @returns {number} Total water bowl storage capacity.
@@ -581,59 +582,70 @@ export function calculateWaterCapacity(buildings) {
     // Buildings under construction do not expand village water reserves yet.
     if (instance.status && instance.status !== 'active') continue;
     const def = BUILDINGS[instance.buildingId];
-    if (!def || def.waterCapacity <= 0) continue;
+    if (!def) continue;
     const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
-    total += def.waterCapacity * level;
+
+    if (Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0) {
+      const idx = Math.min(level - 1, def.waterCapacityByLevel.length - 1);
+      total += def.waterCapacityByLevel[idx];
+    } else if (def.waterCapacity > 0) {
+      total += def.waterCapacity * level;
+    }
   }
 
   return total;
 }
 
 /**
- * Distributes famine population losses across unit types rather than exhausting
- * a single unit type first. Trims from unit types with `count > 1` (highest count
- * first, tie-breaking `hunter` -> `gatherer` -> `builder`) before removing any
- * role's last surviving unit (`builder` -> `hunter` -> `gatherer`).
+ * Distributes famine population losses equally by removing whole units starting from
+ * the role carrying the highest current population (`count * popCost`, tie-breaking
+ * `gatherer` -> `hunter` -> `builder`). Never removes fractional ("half") units.
  *
- * @param {Record<string, number>} units - Current unit counts keyed by unitId.
- * @param {number} excessPopToTrim - Population slots above `effectiveMaxPop` to trim.
+ * @param {Record<string, number>} [units={}] - Current unit counts keyed by unitId.
+ * @param {number} [excessPopToTrim=0] - Population slots above `effectiveMaxPop` to trim.
+ * @param {Record<string, number>} [unitPopCosts={}] - Optional popCost overrides keyed by unitId.
  * @returns {{
  *   units: Record<string, number>,
  *   trimmedTotal: number,
  *   trimmedByUnit: Record<string, number>,
  * }} Post-trim unit counts and casualty summary.
  */
-export function trimUnitsBalanced(units = {}, excessPopToTrim = 0) {
+export function trimUnitsBalanced(units = {}, excessPopToTrim = 0, unitPopCosts = {}) {
   const nextUnits = { ...units };
   const trimmedByUnit = {};
   let trimmedTotal = 0;
   let remaining = Math.max(0, Math.floor(excessPopToTrim));
 
-  const surplusTieOrder = ['hunter', 'gatherer', 'builder'];
-  const lastUnitOrder = ['builder', 'hunter', 'gatherer'];
+  const baseOrder = ['gatherer', 'hunter', 'builder'];
+  const extraIds = Object.keys(nextUnits).filter((id) => !baseOrder.includes(id));
+  const candidateOrder = [...baseOrder, ...extraIds];
 
   while (remaining > 0) {
-    let picked = null;
-    let bestCount = 1;
+    const activeIds = candidateOrder.filter((unitId) => (nextUnits[unitId] ?? 0) > 0);
+    if (activeIds.length === 0) break;
 
-    for (const unitId of surplusTieOrder) {
-      const count = nextUnits[unitId] ?? 0;
-      if (count > bestCount) {
-        bestCount = count;
+    const getPopCost = (unitId) => unitPopCosts?.[unitId] ?? UNITS[unitId]?.popCost ?? 1;
+
+    // Prefer whole units whose popCost fits within remaining excess; fall back to any active role so partial units never occur.
+    const fittingIds = activeIds.filter((unitId) => getPopCost(unitId) <= remaining);
+    const pool = fittingIds.length > 0 ? fittingIds : activeIds;
+
+    let picked = pool[0];
+    let highestPop = (nextUnits[picked] ?? 0) * getPopCost(picked);
+
+    for (let i = 1; i < pool.length; i += 1) {
+      const unitId = pool[i];
+      const rolePop = (nextUnits[unitId] ?? 0) * getPopCost(unitId);
+      if (rolePop > highestPop) {
+        highestPop = rolePop;
         picked = unitId;
       }
     }
 
-    if (!picked) {
-      picked = lastUnitOrder.find((unitId) => (nextUnits[unitId] ?? 0) > 0) ?? null;
-    }
-
-    if (!picked) break;
-
     nextUnits[picked] -= 1;
     trimmedByUnit[picked] = (trimmedByUnit[picked] ?? 0) + 1;
     trimmedTotal += 1;
-    remaining = Math.max(0, remaining - (UNITS[picked]?.popCost ?? 1));
+    remaining = Math.max(0, remaining - getPopCost(picked));
   }
 
   return { units: nextUnits, trimmedTotal, trimmedByUnit };
