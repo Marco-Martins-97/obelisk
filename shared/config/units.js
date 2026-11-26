@@ -19,6 +19,8 @@
  * @param {string} [config.age='stone'] - Tech age unlocking this unit.
  * @param {number} [config.tier=1] - Unit tier.
  * @param {string} [config.trainedAt='main'] - Building ID that trains this unit.
+ * @param {number} [config.carryCapacity=0] - Dedicated expedition carry capacity in bulk units (Caravan).
+ * @param {Record<string, number>} [config.requiredAnimal={}] - Livestock species consumed from pen on training (1 Horse / 1 Donkey).
  * @param {string[]} [config.allowedActions=[]] - Action types executable by this unit.
  * @param {string[]} [config.allowedBiomes=[]] - Territory tile categories targetable by this unit.
  * @param {string} [config.description=''] - Short role description.
@@ -34,6 +36,7 @@ export function createUnit(config) {
   const workDurationHours = config.workDurationHours ?? 1;
   const trainingTimeHours = config.trainingTimeHours ?? 0;
   const popCost = config.popCost ?? 1;
+  const carryCapacity = config.carryCapacity ?? 0;
 
   if (!Number.isFinite(speedKmPerHour) || speedKmPerHour <= 0) {
     throw new RangeError(`Unit "${config.id}" speedKmPerHour must be > 0.`);
@@ -47,6 +50,9 @@ export function createUnit(config) {
   if (!Number.isInteger(popCost) || popCost < 1) {
     throw new RangeError(`Unit "${config.id}" popCost must be an integer >= 1.`);
   }
+  if (!Number.isFinite(carryCapacity) || carryCapacity < 0) {
+    throw new RangeError(`Unit "${config.id}" carryCapacity must be >= 0.`);
+  }
 
   return Object.freeze({
     id: config.id,
@@ -58,6 +64,8 @@ export function createUnit(config) {
     speedKmPerHour,
     workDurationHours,
     trainingTimeHours,
+    carryCapacity,
+    requiredAnimal: Object.freeze({ ...(config.requiredAnimal ?? {}) }),
     trainingCost: Object.freeze({ ...(config.trainingCost ?? {}) }),
     allowedActions: Object.freeze([...(config.allowedActions ?? [])]),
     allowedBiomes: Object.freeze([...(config.allowedBiomes ?? [])]),
@@ -75,7 +83,7 @@ export const UNITS = Object.freeze({
     trainingTimeHours: 0,
     allowedActions: ['gather', 'collect_water'],
     allowedBiomes: ['fields', 'forest', 'water'],
-    description: 'Collects sticks, berries, stones, seeds, straw, clay, ore nuggets, and jars of water.',
+    description: 'Collects sticks, berries, stones, wild roots, straw, clay, ore nuggets, and jars of water.',
   }),
   hunter: createUnit({
     id: 'hunter',
@@ -96,6 +104,48 @@ export const UNITS = Object.freeze({
     allowedActions: ['build', 'upgrade'],
     allowedBiomes: ['fields', 'forest'],
     description: 'Travels to construction sites and stays locked until returning to Main.',
+  }),
+  prospector: createUnit({
+    id: 'prospector',
+    name: 'Prospector',
+    age: 'copper',
+    tier: 2,
+    trainedAt: 'main',
+    popCost: 1,
+    speedKmPerHour: 5,
+    workDurationHours: 1.5,
+    allowedActions: ['prospect', 'expedition'],
+    allowedBiomes: ['fields', 'forest'],
+    description: 'Analyzes Territory rock layers & ore density samples and surveys distant Continent tiles.',
+  }),
+  scout: createUnit({
+    id: 'scout',
+    name: 'Scout',
+    age: 'copper',
+    tier: 2,
+    trainedAt: 'expedition_outpost',
+    popCost: 1,
+    requiredAnimal: { horse: 1 },
+    speedKmPerHour: 10,
+    workDurationHours: 1.0,
+    allowedActions: ['expedition'],
+    allowedBiomes: ['fields', 'forest'],
+    description: 'Fast mounted explorer (1 Horse + 1 Pop) that reveals 3x3 Continent tiles on expeditions.',
+  }),
+  caravan: createUnit({
+    id: 'caravan',
+    name: 'Caravan',
+    age: 'copper',
+    tier: 2,
+    trainedAt: 'market',
+    popCost: 1,
+    requiredAnimal: { donkey: 1 },
+    carryCapacity: 150,
+    speedKmPerHour: 4,
+    workDurationHours: 0,
+    allowedActions: ['expedition', 'trade'],
+    allowedBiomes: ['fields', 'forest', 'water'],
+    description: 'Donkey-drawn freight team (1 Donkey + 1 Pop, 150 bulk cap) needed to haul expedition loot home.',
   }),
 });
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ORES } from '@obelisk/shared';
+import { DAYS_PER_MONTH, DAYS_PER_YEAR, ORES, RESOURCES } from '@obelisk/shared';
 
 const BASE_DEV_LAYERS = [
   { id: 'biome', label: 'Biome' },
@@ -33,6 +33,10 @@ const BASE_DEV_LAYERS = [
  * @param {(show: boolean) => void} props.onToggleObelisk
  * @param {boolean} [props.showFog=true]
  * @param {(show: boolean) => void} [props.onToggleFog]
+ * @param {() => void} [props.onUnlockTerritory]
+ * @param {() => void} [props.onUnlockContinent]
+ * @param {(days: number) => void} [props.onJumpDays]
+ * @param {(params: { resourceId: string, amount: number }) => void} [props.onGrantResource]
  * @returns {import('react').JSX.Element}
  */
 export default function MapControls({
@@ -54,8 +58,14 @@ export default function MapControls({
   onToggleObelisk,
   showFog = true,
   onToggleFog,
+  onUnlockTerritory,
+  onUnlockContinent,
+  onJumpDays,
+  onGrantResource,
 }) {
   const [draftSeed, setDraftSeed] = useState(seed);
+  const [selectedResourceId, setSelectedResourceId] = useState('sticks');
+  const [resourceAmount, setResourceAmount] = useState(50);
 
   if (draftSeed !== seed && document.activeElement?.id !== 'world-seed-input') {
     setDraftSeed(seed);
@@ -238,6 +248,94 @@ export default function MapControls({
               Show Obelisk Marker
             </label>
           </div>
+        </div>
+      )}
+
+      {(onUnlockTerritory || onUnlockContinent || onJumpDays || onGrantResource) && (
+        <div
+          aria-label="Sandbox cheat tools"
+          className="mx-auto mt-2.5 flex max-w-7xl flex-wrap items-center gap-2 border-t border-slate-800 pt-2.5 text-xs"
+        >
+          {onUnlockTerritory && (
+            <button
+              type="button"
+              onClick={onUnlockTerritory}
+              className="rounded-md border border-emerald-700/70 bg-emerald-950/60 px-2.5 py-1 font-medium text-emerald-200 hover:bg-emerald-900/70"
+            >
+              Unlock Map
+            </button>
+          )}
+          {onUnlockContinent && (
+            <button
+              type="button"
+              onClick={onUnlockContinent}
+              className="rounded-md border border-emerald-700/70 bg-emerald-950/60 px-2.5 py-1 font-medium text-emerald-200 hover:bg-emerald-900/70"
+            >
+              Unlock Continent
+            </button>
+          )}
+
+          {onJumpDays && (
+            <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2">
+              <button
+                type="button"
+                onClick={() => onJumpDays(1)}
+                className="rounded-md border border-sky-700/70 bg-sky-950/60 px-2.5 py-1 font-medium text-sky-200 hover:bg-sky-900/70"
+              >
+                +1 Day
+              </button>
+              <button
+                type="button"
+                onClick={() => onJumpDays(DAYS_PER_MONTH)}
+                className="rounded-md border border-sky-700/70 bg-sky-950/60 px-2.5 py-1 font-medium text-sky-200 hover:bg-sky-900/70"
+              >
+                +1 Month
+              </button>
+              <button
+                type="button"
+                onClick={() => onJumpDays(DAYS_PER_YEAR)}
+                className="rounded-md border border-sky-700/70 bg-sky-950/60 px-2.5 py-1 font-medium text-sky-200 hover:bg-sky-900/70"
+              >
+                +1 Year
+              </button>
+            </div>
+          )}
+
+          {onGrantResource && (
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <select
+                aria-label="Sandbox resource"
+                value={selectedResourceId}
+                onChange={(e) => setSelectedResourceId(e.target.value)}
+                className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+              >
+                {Object.values(RESOURCES).map((res) => (
+                  <option key={res.id} value={res.id}>
+                    {res.name}
+                  </option>
+                ))}
+                <option value="water">Water Bowls</option>
+              </select>
+              <input
+                type="number"
+                min={1}
+                max={100000}
+                aria-label="Sandbox resource amount"
+                value={resourceAmount}
+                onChange={(e) => setResourceAmount(Math.max(1, Number(e.target.value) || 1))}
+                className="w-20 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-center font-mono text-slate-100"
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  onGrantResource({ resourceId: selectedResourceId, amount: resourceAmount })
+                }
+                className="rounded-md bg-amber-500 px-2.5 py-1 font-semibold text-slate-950 hover:bg-amber-400"
+              >
+                Add Resource
+              </button>
+            </div>
+          )}
         </div>
       )}
     </section>

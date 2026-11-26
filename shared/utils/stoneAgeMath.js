@@ -84,13 +84,14 @@ export const TILE_ACTION_TABLES = Object.freeze({
   gather: Object.freeze({
     fields: Object.freeze([
       { itemId: 'small_stones', min: 1, max: 2, weight: 28 },
-      { itemId: 'seeds', min: 1, max: 2, weight: 26 },
+      { itemId: 'roots', min: 1, max: 2, weight: 26 },
       { itemId: 'straw', min: 1, max: 2, weight: 28 },
       { itemId: null, min: 0, max: 0, weight: 18 },
     ]),
     forest: Object.freeze([
-      { itemId: 'sticks', min: 1, max: 3, weight: 45 },
-      { itemId: 'berries', min: 1, max: 3, weight: 37 },
+      { itemId: 'sticks', min: 1, max: 3, weight: 40 },
+      { itemId: 'berries', min: 1, max: 3, weight: 32 },
+      { itemId: 'sapling', min: 1, max: 1, weight: 10 },
       { itemId: null, min: 0, max: 0, weight: 18 },
     ]),
     water: Object.freeze([
@@ -105,8 +106,9 @@ export const TILE_ACTION_TABLES = Object.freeze({
       { itemId: null, min: 0, max: 0, weight: 25 },
     ]),
     forest: Object.freeze([
-      { itemId: 'meat', min: 1, max: 2, weight: 48 },
-      { itemId: 'pelts', min: 1, max: 2, weight: 32 },
+      { itemId: 'meat', min: 1, max: 2, weight: 40 },
+      { itemId: 'pelts', min: 1, max: 2, weight: 26 },
+      { itemId: 'bones', min: 1, max: 2, weight: 14 },
       { itemId: null, min: 0, max: 0, weight: 20 },
     ]),
     water: Object.freeze([
@@ -201,10 +203,38 @@ export function calculateStorageUsed(inventory) {
 }
 
 /**
- * Calculates pooled village storage capacity across all active buildings.
- * Combines general capacity (Main + Warehouses) and preserved food capacity (future Granaries).
+ * Computes fractional tier-and-level scaling strictly bounded below the next tier's base value:
+ * `round(B_T + (B_{T+1} - B_T) * ((level - 1) / maxLevel))`.
+ * Because `(level - 1) / maxLevel < 1`, maxLevel in Tier T can never exceed `B_{T+1}`.
  *
- * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.
+ * @param {Record<number, number> | null | undefined} tierBases - Base stat values keyed by integer tier.
+ * @param {number} [tier=1] - Current building tier.
+ * @param {number} [level=1] - Current building level within the tier.
+ * @param {number} [maxLevel=3] - Maximum level permitted within the tier.
+ * @returns {number} Scaled integer attribute value.
+ */
+export function calculateTierLevelValue(tierBases, tier = 1, level = 1, maxLevel = 3) {
+  if (!tierBases) return 0;
+  const safeMaxLevel = Math.max(1, maxLevel);
+  const clampedLevel = Math.max(1, Math.min(level, safeMaxLevel));
+  const sortedTiers = Object.keys(tierBases)
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const fallbackTier = sortedTiers[0] ?? 1;
+  const curBase = tierBases[tier] ?? tierBases[fallbackTier] ?? 0;
+  if (curBase <= 0) return 0;
+
+  const nextBase = tierBases[tier + 1] ?? curBase * 3;
+  return Math.round(curBase + (nextBase - curBase) * ((clampedLevel - 1) / safeMaxLevel));
+}
+
+/**
+ * Calculates pooled village storage capacity across all active buildings.
+ * Excludes specialized Farmstead seed vaults (`calculateFarmSeedCapacity`) and separates
+ * general capacity (Main + Warehouses) from preserved food capacity (Granaries).
+ *
+ * @param {Array<{ buildingId: string, tier?: number, level?: number, status?: string }>} buildings - Placed buildings.
  * @returns {{
  *   generalCapacity: number,
  *   preservedFoodCapacity: number,
@@ -220,13 +250,27 @@ export function calculateStorageCapacity(buildings) {
   for (const instance of buildings ?? []) {
     if (instance.status && instance.status !== 'active') continue;
     const def = BUILDINGS[instance.buildingId];
-    if (!def) continue;
+    if (!def || def.id === 'farm') continue;
+    const tier = instance.tier ?? def.tier;
     const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
 
-    if (def.storageBonusPerLevel > 0) {
+    if (def.storageTierBases) {
+      generalCapacity += calculateTierLevelValue(def.storageTierBases, tier, level, def.maxLevel);
+    } else if (def.storageBonusPerLevel > 0) {
       generalCapacity += def.storageBonusPerLevel * level;
     }
-    if (def.preservedStorageBonusPerLevel > 0) {
+
+    if (def.preservedStorageTierBases) {
+      preservedFoodCapacity += calculateTierLevelValue(
+        def.preservedStorageTierBases,
+        tier,
+        level,
+        def.maxLevel,
+      );
+      if (def.spoilageMultiplier < bestSpoilageMultiplier) {
+        bestSpoilageMultiplier = def.spoilageMultiplier;
+      }
+    } else if (def.preservedStorageBonusPerLevel > 0) {
       preservedFoodCapacity += def.preservedStorageBonusPerLevel * level;
       if (def.spoilageMultiplier < bestSpoilageMultiplier) {
         bestSpoilageMultiplier = def.spoilageMultiplier;
@@ -583,11 +627,14 @@ export function calculateWaterCapacity(buildings) {
     if (instance.status && instance.status !== 'active') continue;
     const def = BUILDINGS[instance.buildingId];
     if (!def) continue;
+    const tier = instance.tier ?? def.tier;
     const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
 
-    if (Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0) {
+    if (tier === 1 && Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0) {
       const idx = Math.min(level - 1, def.waterCapacityByLevel.length - 1);
       total += def.waterCapacityByLevel[idx];
+    } else if (def.waterTierBases) {
+      total += calculateTierLevelValue(def.waterTierBases, tier, level, def.maxLevel);
     } else if (def.waterCapacity > 0) {
       total += def.waterCapacity * level;
     }
@@ -664,9 +711,15 @@ export function calculateMaxPopulation(buildings) {
     // Unfinished buildings under construction do not grant housing capacity yet.
     if (instance.status && instance.status !== 'active') continue;
     const def = BUILDINGS[instance.buildingId];
-    if (!def || def.popBonusPerLevel <= 0) continue;
+    if (!def) continue;
+    const tier = instance.tier ?? def.tier;
     const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
-    maxPop += def.popBonusPerLevel * level;
+
+    if (def.popTierBases) {
+      maxPop += calculateTierLevelValue(def.popTierBases, tier, level, def.maxLevel);
+    } else if (def.popBonusPerLevel > 0) {
+      maxPop += def.popBonusPerLevel * level;
+    }
   }
 
   return maxPop;

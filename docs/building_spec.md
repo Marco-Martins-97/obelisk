@@ -33,7 +33,18 @@ MongoDB stores only dynamic building instances per settlement:
 | **`HOUSE`** | Increases maximum settlement population by **`+10` per level**. | `1..3` | `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 6, pelts: 4, straw: 4 }` (`2.0h`) |
 | **`WAREHOUSE`** | Expands unified village bulk storage by **`+250` per level**. | `1..3` | No tech required (`requiredTechs: []`); `workersRequired: 0`, `buildersRequired: 1`, Cost: `{ sticks: 8, pelts: 4, straw: 6 }` (`2.0h`) |
 | **`DRYING_RACK`** | Air-dries `meat`/`fish` or salt-cures them into `dried_*` / `salted_*` provisions to slow spoilage. | `1..3` | Requires `stone_tools` (`requiredTechs: ['stone_tools']`); `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ sticks: 5, pelts: 2, straw: 2 }` (`1.5h`) |
-| **`KILN`** | Crafts `charcoal` and smelts `10 copper_nuggets` → `1 copper_ingot` (triggers **`copper_age`**). | `1..3` | Requires `stone_tools` (`requiredTechs: ['stone_tools']`); `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` (`3.0h`) |
+| **`KILN`** | Crafts `charcoal` and smelts Copper/Bronze ingots (`bronze_ingot` triggers **`bronze_age`**). | `1..3` | Requires `stone_tools`; `workersRequired: 1`, `buildersRequired: 1`, Cost: `{ small_stones: 5, clay: 8, straw: 4, sticks: 4 }` (`3.0h`) |
+| **`SMITHY`** | Copper Age workshop researching 6 Stone/Bone starter tools → Copper upgrades. | `1..3` | Tier 2 (`Main` T2); `workersRequired: 1`, Cost: `{ sticks: 8, small_stones: 6, clay: 4, pelts: 2 }` (`1.5h`) |
+| **`TIMBER_CAMP`** | Continuously fells `wood_logs` on forest tiles until `forestLeft === 0`. | `1..3` | Requires `stone_axe`, `forest_only`; `workersRequired: 1` |
+| **`MINE`** | Continuously extracts all hosted ores (`ore_ore`) scaled by layer density (`100k × d`). | `1..3` | Requires `bone_pickaxe`; `workersRequired: 2` |
+| **`QUARRY`** | Continuously cuts `stone_blocks` on any land tile (`50k` deposit). | `1..3` | Requires `bone_pickaxe`; `workersRequired: 1` |
+| **`CLAY_PIT`** | Continuously digs `clay` adjacent to water (`10k` deposit). | `1..3` | Requires `stone_shovel`, `near_water`; `workersRequired: 1` |
+| **`WELL`** | Passively draws water bowls/day & expands water cap (`60/lv` base tier scaling). | `1..3` | Requires `stone_shovel`; `workersRequired: 0` |
+| **`FARM` / `CROP_FIELD` / `ANIMAL_PEN` / `ORCHARD`** | `FARM` protects seed vault & caps adjacent `Crop Field` (64 slots), `Animal Pen` (livestock), and `Orchard` (9 saplings). | `1..3` | Requires `stone_hoe`; attachments must be placed adjacent to active `FARM` |
+| **`GRANARY`** | Dedicated food warehouse reducing daily spoilage by `-60%` (highest spoil first). | `1..3` | Requires `stone_hammer`; `preservedStorageTierBases: { 2: 500, 3: 1500 }` |
+| **`MARKET`** | Crafts `Caravan` (`1 donkey + 1 pop`, `150` bulk carry) & swaps goods `1:1`. | `1..3` | Requires `stone_hammer`; `workersRequired: 1` |
+| **`EXPEDITION_OUTPOST`** | Trains mounted `Scout` (`1 horse + 1 pop`) & dispatches Continent expeditions. | `1..3` | Requires `stone_hammer`; `workersRequired: 1` |
+| **`WALL`** | Internal fortification built & upgraded inside `MAIN`; adds defense % & cuts building degradation. | `1..3` | Requires `stone_spear`; built inside `MAIN` (`defenseTierBases: { 2: 15, 3: 45 }`) |
 
 ### 2.1 `MAIN` Tier vs. Building Level & Age Downgrade Rules
 - **Age Controller (`MAIN.tier`):** Each village tracks its own `MAIN` Tier (`1` Stone → `2` Copper → `3` Bronze → `4` Iron → `5` Steel), while `MAIN.level` (`1..3`) scales local storage and housing capacity.
@@ -52,13 +63,11 @@ MongoDB stores only dynamic building instances per settlement:
      - **Traveling (`t_travel`):** Builder walks `MAIN → tile`.
      - **Working (`t_build`):** Building finishes and becomes active at `now + t_travel + t_build`.
      - **Returning (`t_travel`):** Builder walks `tile → MAIN`, unlocks availability, and reveals the `3×3` Territory border around `(x, y)` at `now + 2 * t_travel + t_build`.
-2. **Left-Click Building Interaction (Online UI):**
-   - **Under Construction:** Displays `"Building..."` and the remaining countdown timer (`buildEndsAt`).
-   - **Completed:** Opens the **Building Menu** containing building info, crafting recipes, research options (`FIREPIT`), upgrades, and unit training (for `MAIN`).
-3. **Right-Click Build Submenu Colors (Online UI):**
-   - **Normal:** Valid tile, free builder, tech/tier unlocked, and sufficient resources—buildable now.
-   - **Grey:** Valid placement and tech unlocked, but **insufficient resources**.
-   - **Red:** **Cannot build** (unbuildable/shrouded/occupied tile, no free builder, or missing `requiredTechs` / Age tier).
+2. **Left-Click Building Interaction (`BuildingModal`):**
+   - **Initial Construction (`constructing`):** Displays `"Building..."` and remaining completion/return countdown timers.
+   - **Active & Upgrading (`active`):** Level/Tier upgrades keep `status: 'active'` so players can continue crafting (with batch `qty` + `Max` controls), researching techs, training units, and producing resources alongside a non-blocking `"Upgrading... (Building remains active)"` banner, exact next-level/tier stat previews (`getBuildingUpgradePreview`), and red missing-cost highlights (`CostInline`).
+3. **Right-Click Build Submenu (`TileActionMenu`):**
+   - Buttons use `data-build-status` styling (`ready` green, `grey` missing resources, `red` locked/blocked) and show build duration (`{buildTimeHours}h`) instead of literal `READY`/`GREY`/`RED` labels, while the footer displays cost items with missing resources highlighted in red.
 4. **Settlement Limits (Capital vs. Villages):**
    - **Capital (`7×7`):** A player may upgrade only **1** settlement to a Capital.
    - **Cities / Villages (`5×5`):** Players may own multiple villages.

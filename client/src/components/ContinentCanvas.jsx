@@ -70,6 +70,7 @@ function getInitialViewport(gridSize, focusCoords, continentFog, showFog) {
  * @param {{ x: number, y: number } | null} [props.villageCoords=null]
  * @param {{ x: number, y: number }} props.selectedCoords
  * @param {(coords: { x: number, y: number }) => void} [props.onSelectTile]
+ * @param {(payload: { x: number, y: number, tile: object, clientX: number, clientY: number }) => void} [props.onOpenTileMenu]
  * @param {() => void} [props.onSwitchToTerritory]
  * @returns {import('react').JSX.Element}
  */
@@ -85,6 +86,7 @@ export default function ContinentCanvas({
   villageCoords = null,
   selectedCoords,
   onSelectTile,
+  onOpenTileMenu,
   onSwitchToTerritory,
 }) {
   const canvasRef = useRef(null);
@@ -297,6 +299,34 @@ export default function ContinentCanvas({
     if (coords) onSelectTile(coords);
   };
 
+  const handleContextMenu = (e) => {
+    if (!onOpenTileMenu) return;
+    e.preventDefault();
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? CANVAS_SIZE / rect.width : 1;
+    const scaleY = rect.height > 0 ? CANVAS_SIZE / rect.height : 1;
+
+    const coords = screenToTile({
+      clientX: rect.left + (e.clientX - rect.left) * scaleX,
+      clientY: rect.top + (e.clientY - rect.top) * scaleY,
+      rect: { left: rect.left, top: rect.top },
+      offsetX: viewport.offsetX,
+      offsetY: viewport.offsetY,
+      tileSize: viewport.tileSize,
+      gridSize: continent.size,
+    });
+
+    if (coords) {
+      onOpenTileMenu({
+        x: coords.x,
+        y: coords.y,
+        tile: continent.tiles[coords.y * continent.size + coords.x],
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    }
+  };
+
   const hoveredShrouded =
     hoveredTile &&
     showFog &&
@@ -365,6 +395,7 @@ export default function ContinentCanvas({
             }}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
+            onContextMenu={handleContextMenu}
             onMouseLeave={() => {
               dragRef.current.active = false;
               setHoveredTile(null);

@@ -14,7 +14,7 @@ You begin at **(12, 12)** inside your `25×25` Territory with:
 1. **Train Units:** Left-click **Main Village Hall** (or click **Open Main Hall** in the header bar) to train **Gatherers** (`5 km/h`), **Hunters** (`6 km/h`), and **Builders** (`4 km/h`).
 2. **Send Squads or Mixed Teams:** Right-click any explored tile:
    - **Gather:**
-     - *Fields:* Small Stones, Seeds, Straw.
+     - *Fields:* Small Stones, Wild Roots, Straw.
      - *Forest:* Sticks, Berries.
      - *Water (River / Lake):* Clay and Gold/Silver/Copper/Tin/Nickel/Iron/Gems **Ore Nuggets** (rare panning!).
    - **Hunt:** *Forest* → Raw Meat & Pelts; *Fields* → Wild Grain; *Water* → Raw Fish.
@@ -48,3 +48,18 @@ Running short on food or water triggers sequential daily debuffs:
 ## 5. Building Material Roles & Copper Age Goal
 - **Basic Materials (`Sticks`, `Pelts`, `Straw`):** **Main Hall** upgrades (`+250` pooled storage, `+10` max pop, and `10 / 25 / 50` water bowls across Lv 1 / 2 / 3), **House** (`+10` max pop/lv), **Warehouse** (`+250` pooled storage/lv), and **Drying Rack**.
 - **Stone Buildings (`Small Stones` + `Clay`):** **Firepit** (cooks, boils salt, researches **Stone Tools**) and **Clay Kiln** (crafts **Charcoal** and smelts **`10` Copper Nuggets + `2` Charcoal → `1` Copper Ingot**, unlocking Copper Age).
+
+---
+
+## 6. Copper Age Progression (Tier 2+)
+1. **Smithy & 6 Specialized Tools:** Once Main reaches Tier 2, build a **Smithy** (`8` Sticks, `6` Small Stones, `4` Clay, `2` Pelts) and research **`Stone Axe`**, **`Bone Pickaxe`** (from hunted Bones), **`Stone Hoe`**, **`Stone Spear`**, **`Stone Shovel`**, and **`Stone Hammer`** — then upgrade them with **Copper Ingots**.
+2. **Prospecting & Continuous Production:** Train **Prospectors** at Main and right-click explored tiles (`Prospect Tile` → `View Prospection Report`) before placing **Mines** (extract all hosted ores by density), **Timber Camps** (forest tiles), **Quarries**, **Clay Pits** (near water), and **Wells**.
+3. **Farming, Orchards & Animal Pens:** Build a **Farmstead** to guard Grain & Wild Roots and unlock adjacent **Crop Fields** (plant in Spring, manage TFC soil nutrients A/B/C with **Manure**), **Orchards** (plant **Saplings**, harvest Apples in Summer/Autumn after 1 year), and **Animal Pens** (Hunters with Stone Spear capture Horses, Donkeys, Goats, Sheep, and Chickens).
+4. **Markets, Walls & Continent Expeditions:** Build internal **City Walls** inside Main, trade 1:1 at the **Market** (`Caravan` = `1 Donkey + 1 Pop`), train **Scouts** (`1 Horse + 1 Pop`) at **Expedition Outpost**, right-click the **Continent Map** to launch distance-scaled expeditions (include a Caravan to haul resources back), and smelt **Bronze Ingots** at the Kiln for the **Bronze Age**.
+
+---
+
+## 7. HUD Modals, Crafting & Sandbox Controls
+- **Header Modals:** Open **Stockpile**, **Technologies**, and **Village Log** from the status header bar. Inside **Stockpile**, switch category tabs (**All**, **Materials**, **Food**, **Ores**, **Ingots**) and left-click any item card to discard items.
+- **Upgrades & Batch Crafting:** Missing materials or water in Build/Crafting/Upgrade screens appear in red; active buildings remain usable during level/tier upgrades (`Upgrading...`), and crafting supports batch `-`/`+`/`Max` quantities.
+- **Sandbox (`/sandbox`):** Includes Dev map layers plus **Unlock Map**, **Unlock Continent**, **`+1 Day` / `+1 Month` / `+1 Year`** time jumps, and an **Add Resource** tool.

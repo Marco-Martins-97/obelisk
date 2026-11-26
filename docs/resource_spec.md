@@ -19,7 +19,7 @@ Teams (`1+` Gatherers and/or Hunters) march at the **slowest unit's speed** (`km
 
 | Territory Tile Type | Action | Possible Yields |
 | :--- | :--- | :--- |
-| **Fields (Open Land)** | `Gather` | `small_stones`, `seeds`, `straw` |
+| **Fields (Open Land)** | `Gather` | `small_stones`, `roots` (Wild Roots), `straw` |
 | **Water (Lake / River / Spring)** | `Gather` (Panning) | `clay`, `ore_nuggets` from **any ore except `flux` and `coal`** (`copper`, `iron`, `tin`, `nickel`, `silver`, `gold`, `gems`) |
 | **Water (Lake / River / Spring)** | `Collect Water` (`Gatherer` + `Hunter`) | **`1 jar` (`10` water bowls)** per unit into water storage |
 | **Forest** | `Gather` | `berries`, `sticks` |
@@ -48,7 +48,10 @@ Tools are **permanent, player-persistent technologies** rather than physical sto
 | :--- | :--- | :--- | :--- | :--- |
 | **`wood_tools`** | T1 General | Unlocked at spawn (`starter`) | Free (starter tech) | `1.0×` work speed, `0` loot bonus |
 | **`stone_tools`** | T2 General | Build **`1 FIREPIT`** | At `FIREPIT`: `{ small_stones: 3, sticks: 2 }`, `1.0h` | **`+20%`** gather/hunt work speed (`1.2×`), **`+1`** max loot, **`-50%`** empty roll weight (`0.5×`), unlocks **`KILN`** |
-| **`copper_age`** | T2 Age | Craft **`1 copper_ingot`** at `KILN` | Unlocks `MAIN` Tier 2 upgrade | Permits upgrading `MAIN` to Copper Age (`Tier 2`); prepares Copper specialization tool split (`axe`, `pickaxe`, `hoe`, `hammer`, `spear`) |
+| **`copper_age`** | T2 Age | Craft **`1 copper_ingot`** at `KILN` | Unlocks `MAIN` Tier 2 + **`SMITHY`** | Upgrades `MAIN` to Copper Age (`Tier 2`) |
+| **`stone_axe`..`stone_hammer`** | T2 Specialized | Build **`SMITHY`** | Researched at `SMITHY` (`bones` + `sticks`/`small_stones`) | Unlocks Copper Age production, farming, wells, granaries, walls, markets, outposts |
+| **`copper_axe`..`copper_hammer`** | T3 Copper Tools | Prerequisite `stone_*`/`bone_*` tool | `{ copper_ingot: 1, sticks: 2 }` at `SMITHY` | **`+35%`** specialized production/work speed & `+1` bonus |
+| **`bronze_age`** | T3 Age | Smelt **`1 bronze_ingot`** at `KILN` | Unlocks `MAIN` Tier 3 | Upgrades `MAIN` to Bronze Age (`Tier 3`) |
 
 ---
 
@@ -59,8 +62,8 @@ Tools are **permanent, player-persistent technologies** rather than physical sto
 - **5-Stage Starvation/Dehydration Debuff & Recovery:** Missing food or water triggers sequential daily penalties (**Day 1 Hunger I** `-10%`, **Day 2 Hunger II** `-30%`, **Day 3 Hunger III** `-50%`, **Day 4 Sickness** `-80%` work/travel speed, lower gather/hunt success & yield, **Day 5+ Death** `-80%` + `-10% maxPop/day`), collapsing into an **Abandoned Village** if effective max population reaches `0`. Fed/hydrated days recover **`+20%` efficiency/day** and **`+10%` max population/day**.
 - **Day / Night Cycle:** Tracked continuously within each 4-hour in-game day (visual/clock only in Stone Age; no gameplay penalty yet).
 - **Linear `sizeClass` (1–5) Bulkiness:** Linearly scales warehouse capacity and caravan/expedition carry limits (`1` = 1 unit, `2` = 2 units, ..., `5` = 5 units):
-  - `1` (**Tiny**): Seeds, gems, coins, ancient relics.
-  - `2` (**Small**): Sticks, straw, pelts, small stones, ingots, ore nuggets, berries, rations.
+  - `1` (**Tiny**): Salt, eggs, gems, coins, ancient relics.
+  - `2` (**Small**): Sticks, straw, pelts, small stones, wild roots, ingots, ore nuggets, berries, rations.
   - `3` (**Medium**): Logs, raw ores, clay.
   - `4` (**Big**): Cut stone blocks, timber beams, barrels.
   - `5` (**Large**): Heavy machinery parts, monolith blocks.

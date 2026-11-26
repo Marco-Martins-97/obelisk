@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   AGES,
   BUILDINGS,
@@ -7,10 +7,14 @@ import {
   TECHNOLOGIES,
   UNITS,
   canBuildOrUpgradeBuilding,
+  getBuildingTierUpgradeRule,
+  getBuildingUpgradePreview,
   getMainTierChangeRule,
   isTechTriggerSatisfied,
 } from '@obelisk/shared';
-import { formatCostSummary, formatGameDuration } from '../utils/timeFormat.js';
+import CopperAgeBuildingPanels from './CopperAgeBuildingPanels.jsx';
+import CostInline from './CostInline.jsx';
+import { formatGameDuration } from '../utils/timeFormat.js';
 
 /**
  * Native `<dialog>` building inspector and management modal.
@@ -35,18 +39,22 @@ import { formatCostSummary, formatGameDuration } from '../utils/timeFormat.js';
 export default function BuildingModal({
   building,
   state,
+  village,
+  territory,
   maxPop,
   popUsed,
   freeUnits,
   onClose,
   onTrainUnit,
   onUpgradeBuilding,
+  onUpgradeBuildingTier,
   onChangeMainTier,
   onStartCraft,
   onStartResearch,
 }) {
   const dialogRef = useRef(null);
   const titleId = useId();
+  const [craftQuantities, setCraftQuantities] = useState({});
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -95,7 +103,10 @@ export default function BuildingModal({
   const activeBuildTask = building
     ? state.tasks.find(
         (t) =>
-          (t.kind === 'build' || t.kind === 'upgrade' || t.kind === 'upgrade_main') &&
+          (t.kind === 'build' ||
+            t.kind === 'upgrade' ||
+            t.kind === 'upgrade_main' ||
+            t.kind === 'upgrade_tier') &&
           t.instanceId === building.instanceId,
       )
     : null;
@@ -119,11 +130,20 @@ export default function BuildingModal({
       })
     : null;
   const levelUpgradeCost = def
-    ? Object.fromEntries(Object.entries(def.cost).map(([id, q]) => [id, q * nextLevel]))
+    ? Object.fromEntries(
+        Object.entries(def.cost).map(([id, q]) => [
+          id,
+          q * (building.tier ?? def.tier) * nextLevel,
+        ]),
+      )
     : {};
   const canAffordLevelUpgrade = Object.entries(levelUpgradeCost).every(
     ([id, q]) => (state.inventory[id] ?? 0) >= q,
   );
+  const tierResetRule =
+    building && building.buildingId !== 'main' && building.level >= (def?.maxLevel ?? 3)
+      ? getBuildingTierUpgradeRule({ building, mainTier: main.tier })
+      : null;
 
   const tierUpRule =
     building?.buildingId === 'main'
@@ -141,6 +161,9 @@ export default function BuildingModal({
           unlockedTechs: state.unlockedTechs,
         })
       : null;
+
+  const isUpgrading = Boolean(activeBuildTask) && building?.status === 'active';
+  const upgradePreview = building ? getBuildingUpgradePreview({ building }) : null;
 
   return (
     <dialog
@@ -172,30 +195,21 @@ export default function BuildingModal({
             </button>
           </div>
 
-          <p className="mt-3 text-xs text-slate-300">{def.description}</p>
           {(() => {
-            const waterBonus =
-              Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0
-                ? def.waterCapacityByLevel[
-                    Math.min(
-                      Math.max(1, building.level ?? 1) - 1,
-                      def.waterCapacityByLevel.length - 1,
-                    )
-                  ]
-                : def.waterCapacity * building.level;
-
+            const cur = upgradePreview?.current ?? {};
             const bonusParts = [
-              def.storageBonusPerLevel > 0
-                ? `Pooled Storage Bonus: +${def.storageBonusPerLevel * building.level} bulk`
-                : null,
-              def.popBonusPerLevel > 0
-                ? `Housing Bonus: +${def.popBonusPerLevel * building.level} max pop`
-                : null,
-              waterBonus > 0 ? `Water Storage Bonus: +${waterBonus} bowls` : null,
+              cur.storage > 0 ? `Storage: +${cur.storage}` : null,
+              cur.preservedStorage > 0 ? `Granary: +${cur.preservedStorage}` : null,
+              cur.popCap > 0 ? `Pop: +${cur.popCap}` : null,
+              cur.waterCap > 0 ? `Water: +${cur.waterCap}` : null,
+              cur.seedVault > 0 ? `Vault: ${cur.seedVault}` : null,
+              cur.maxAttachments > 0 ? `Attachments: ${cur.maxAttachments}` : null,
+              cur.penCapacity > 0 ? `Pen Cap: ${cur.penCapacity}` : null,
+              cur.productionPerDay > 0 ? `Output: +${cur.productionPerDay}/d` : null,
             ].filter(Boolean);
 
             return bonusParts.length > 0 ? (
-              <p className="mt-1 font-mono text-[11px] text-emerald-300">
+              <p className="mt-2 font-mono text-[11px] text-emerald-300">
                 {bonusParts.join(' · ')}
               </p>
             ) : null;
@@ -217,6 +231,29 @@ export default function BuildingModal({
             </div>
           ) : (
             <div className="mt-4 space-y-4 text-xs">
+              {isUpgrading && activeBuildTask && (
+                <div
+                  role="status"
+                  className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs"
+                >
+                  <div className="font-bold text-amber-300">
+                    Upgrading... (Building remains active)
+                  </div>
+                  <div className="mt-1 font-mono text-slate-200">
+                    Completion in:{' '}
+                    {formatGameDuration(
+                      (activeBuildTask.completedAtMs ?? state.virtualTimeMs) - state.virtualTimeMs,
+                    )}
+                  </div>
+                  {activeBuildTask.returnsAtMs &&
+                    activeBuildTask.returnsAtMs !== activeBuildTask.completedAtMs && (
+                      <div className="mt-0.5 font-mono text-slate-400">
+                        Builder returns to Main in:{' '}
+                        {formatGameDuration(activeBuildTask.returnsAtMs - state.virtualTimeMs)}
+                      </div>
+                    )}
+                </div>
+              )}
               {/* MAIN Unit Training */}
               {def.trainsUnits.length > 0 && (
                 <section className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
@@ -228,37 +265,71 @@ export default function BuildingModal({
                   </div>
 
                   <div className="grid gap-2">
-                    {def.trainsUnits.map((unitId) => {
-                      const u = UNITS[unitId];
-                      const canTrain = !isAbandoned && popUsed + u.popCost <= maxPop;
-                      return (
-                        <div
-                          key={unitId}
-                          className="flex items-center justify-between rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
-                        >
-                          <div>
-                            <div className="font-medium text-slate-100">
-                              {u.name} ({freeUnits[unitId]}/{state.units[unitId] ?? 0} free)
-                            </div>
-                            <div className="text-[11px] text-slate-400">
-                              {u.speedKmPerHour} km/h · Train: {u.trainingTimeHours}h · Pop: {u.popCost}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={!canTrain}
-                            onClick={() => onTrainUnit(unitId)}
-                            className={`rounded px-2.5 py-1 font-semibold transition ${
-                              canTrain
-                                ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                                : 'cursor-not-allowed bg-slate-800 text-slate-500'
-                            }`}
+                    {def.trainsUnits
+                      .filter((unitId) => (main?.tier ?? 1) >= (UNITS[unitId]?.tier ?? 1))
+                      .map((unitId) => {
+                        const u = UNITS[unitId];
+                        const missingAnimals = Object.entries(u.requiredAnimal ?? {}).filter(
+                          ([animalId, q]) => (state.animals?.[animalId] ?? 0) < q,
+                        );
+                        const hasAnimals = missingAnimals.length === 0;
+                        const prosOk =
+                          unitId !== 'prospector' || state.unlockedTechs.includes('bone_pickaxe');
+                        const canTrain =
+                          !isAbandoned && prosOk && hasAnimals && popUsed + u.popCost <= maxPop;
+                        return (
+                          <div
+                            key={unitId}
+                            className="flex items-center justify-between rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
                           >
-                            Train +1
-                          </button>
-                        </div>
-                      );
-                    })}
+                            <div>
+                              <div className="font-medium text-slate-100">
+                                {u.name} ({freeUnits[unitId]}/{state.units[unitId] ?? 0} free)
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                Pop: {u.popCost}
+                                {Object.keys(u.requiredAnimal ?? {}).length > 0 && (
+                                  <>
+                                    {' · '}
+                                    <span
+                                      className={
+                                        missingAnimals.length > 0
+                                          ? 'font-semibold text-rose-400'
+                                          : 'text-slate-300'
+                                      }
+                                    >
+                                      Needs:{' '}
+                                      {Object.entries(u.requiredAnimal)
+                                        .map(([a, q]) => `${q} ${a}`)
+                                        .join(', ')}
+                                    </span>
+                                  </>
+                                )}
+                                {!prosOk && (
+                                  <>
+                                    {' · '}
+                                    <span className="font-semibold text-rose-400">
+                                      Needs Bone Pickaxe
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={!canTrain}
+                              onClick={() => onTrainUnit(unitId)}
+                              className={`rounded px-2.5 py-1 font-semibold transition ${
+                                canTrain
+                                  ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                  : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                              }`}
+                            >
+                              Train +1
+                            </button>
+                          </div>
+                        );
+                      })}
                   </div>
                 </section>
               )}
@@ -272,10 +343,15 @@ export default function BuildingModal({
                       const tech = TECHNOLOGIES[techId];
                       const isUnlocked = state.unlockedTechs.includes(techId);
                       const isResearching = activeCraftOrResearch.some((t) => t.techId === techId);
-                      const triggerOk = isTechTriggerSatisfied(techId, {
-                        builtBuildings: state.buildings,
-                        craftedCounts: state.craftedCounts,
-                      });
+                      const prereqsOk = tech.prerequisites.every((p) =>
+                        state.unlockedTechs.includes(p),
+                      );
+                      const triggerOk =
+                        prereqsOk &&
+                        isTechTriggerSatisfied(techId, {
+                          builtBuildings: state.buildings,
+                          craftedCounts: state.craftedCounts,
+                        });
                       const canAfford = Object.entries(tech.cost).every(
                         ([id, q]) => (state.inventory[id] ?? 0) >= q,
                       );
@@ -287,11 +363,9 @@ export default function BuildingModal({
                         >
                           <div>
                             <div className="font-medium text-amber-200">{tech.name}</div>
-                            <div className="text-[11px] text-slate-400">
-                              {tech.description}
-                            </div>
                             <div className="mt-0.5 text-[11px] text-slate-300">
-                              Cost: {formatCostSummary(tech.cost)} · {tech.researchTimeHours}h
+                              Cost: <CostInline cost={tech.cost} inventory={state.inventory} /> ·{' '}
+                              {tech.researchTimeHours}h
                             </div>
                           </div>
                           {isUnlocked ? (
@@ -333,49 +407,134 @@ export default function BuildingModal({
                     {def.craftsRecipes.map((recipeId) => {
                       const recipe = RECIPES[recipeId];
                       const waterCost = recipe.waterCostBowls ?? 0;
-                      const hasWater = (state.water ?? 0) >= waterCost;
-                      const canAfford = Object.entries(recipe.inputs).every(
-                        ([id, q]) => (state.inventory[id] ?? 0) >= q,
+                      const inputLimits = Object.entries(recipe.inputs).map(([id, q]) =>
+                        q > 0 ? Math.floor((state.inventory[id] ?? 0) / q) : 999,
                       );
-                      const canCraft = !isAbandoned && canAfford && hasWater;
+                      const waterLimit =
+                        waterCost > 0 ? Math.floor((state.water ?? 0) / waterCost) : 999;
+                      const maxCraftable = Math.max(
+                        0,
+                        Math.min(999, ...inputLimits, waterLimit),
+                      );
+                      const rawQty = craftQuantities[recipeId] ?? 1;
+                      const selectedQty =
+                        maxCraftable > 0
+                          ? Math.max(1, Math.min(maxCraftable, Math.floor(rawQty) || 1))
+                          : 1;
+                      const canCraft = !isAbandoned && maxCraftable >= 1;
+
+                      const scaledInputs = Object.fromEntries(
+                        Object.entries(recipe.inputs).map(([id, q]) => [id, q * selectedQty]),
+                      );
+                      const scaledWater = waterCost * selectedQty;
 
                       return (
                         <div
                           key={recipeId}
-                          className="flex items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
+                          className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
                         >
-                          <div>
+                          <div className="min-w-0 flex-1">
                             <div className="font-medium text-slate-100">
                               {recipe.name}
                               {recipe.unlocksTech && (
-                                <span className="ml-2 rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] text-orange-300">
-                                  Unlocks Copper Age
+                                <span className="ml-2 rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] capitalize text-orange-300">
+                                  Unlocks {recipe.unlocksAge ?? recipe.unlocksTech} Age
                                 </span>
                               )}
                             </div>
                             <div className="text-[11px] text-slate-400">
-                              {formatCostSummary(recipe.inputs)}
-                              {waterCost > 0 ? ` + ${waterCost} Water Bowls` : ''} →{' '}
+                              <CostInline
+                                cost={scaledInputs}
+                                inventory={state.inventory}
+                                waterCost={scaledWater}
+                                currentWater={state.water ?? 0}
+                              />{' '}
+                              →{' '}
                               {Object.entries(recipe.outputs)
-                                .map(([id, q]) => `${q} ${RESOURCES[id]?.name ?? id}`)
+                                .map(([id, q]) => `${q * selectedQty} ${RESOURCES[id]?.name ?? id}`)
                                 .join(', ')}{' '}
-                              ({recipe.craftTimeHours}h)
+                              ({Math.round(recipe.craftTimeHours * selectedQty * 100) / 100}h)
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            disabled={!canCraft}
-                            onClick={() =>
-                              onStartCraft({ buildingInstanceId: building.instanceId, recipeId })
-                            }
-                            className={`rounded px-2.5 py-1 font-semibold ${
-                              canCraft
-                                ? 'bg-sky-500 text-slate-950 hover:bg-sky-400'
-                                : 'cursor-not-allowed bg-slate-800 text-slate-500'
-                            }`}
-                          >
-                            Craft
-                          </button>
+
+                          <div className="flex items-center gap-1 font-mono text-[11px]">
+                            <button
+                              type="button"
+                              aria-label={`Decrease quantity for ${recipe.name}`}
+                              disabled={isAbandoned || selectedQty <= 1}
+                              onClick={() =>
+                                setCraftQuantities((prev) => ({
+                                  ...prev,
+                                  [recipeId]: Math.max(1, selectedQty - 1),
+                                }))
+                              }
+                              className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              max={Math.max(1, maxCraftable)}
+                              disabled={isAbandoned || maxCraftable <= 0}
+                              aria-label={`Quantity for ${recipe.name}`}
+                              value={selectedQty}
+                              onChange={(e) =>
+                                setCraftQuantities((prev) => ({
+                                  ...prev,
+                                  [recipeId]: Math.max(1, Math.floor(Number(e.target.value) || 1)),
+                                }))
+                              }
+                              className="w-12 rounded border border-slate-700 bg-slate-950 px-1 py-1 text-center text-slate-100 disabled:opacity-40"
+                            />
+                            <button
+                              type="button"
+                              aria-label={`Increase quantity for ${recipe.name}`}
+                              disabled={isAbandoned || selectedQty >= maxCraftable}
+                              onClick={() =>
+                                setCraftQuantities((prev) => ({
+                                  ...prev,
+                                  [recipeId]: Math.min(Math.max(1, maxCraftable), selectedQty + 1),
+                                }))
+                              }
+                              className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Max quantity for ${recipe.name}`}
+                              disabled={!canCraft}
+                              onClick={() =>
+                                setCraftQuantities((prev) => ({
+                                  ...prev,
+                                  [recipeId]: Math.max(1, maxCraftable),
+                                }))
+                              }
+                              className="rounded border border-amber-600/60 bg-amber-950/50 px-1.5 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-900/60 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Max
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canCraft}
+                              onClick={() => {
+                                onStartCraft({
+                                  buildingInstanceId: building.instanceId,
+                                  recipeId,
+                                  quantity: selectedQty,
+                                });
+                                setCraftQuantities((prev) => ({ ...prev, [recipeId]: 1 }));
+                              }}
+                              className={`ml-1 rounded px-2.5 py-1 font-sans font-semibold ${
+                                canCraft
+                                  ? 'bg-sky-500 text-slate-950 hover:bg-sky-400'
+                                  : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                              }`}
+                            >
+                              Craft
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -389,20 +548,93 @@ export default function BuildingModal({
                   <div className="font-semibold text-sky-300">Active Work Queue</div>
                   {activeCraftOrResearch.map((t) => (
                     <div key={t.id} className="mt-1 flex justify-between font-mono text-[11px]">
-                      <span>{t.recipeId ? RECIPES[t.recipeId].name : TECHNOLOGIES[t.techId].name}</span>
+                      <span>
+                        {t.recipeId
+                          ? `${t.quantity > 1 ? `${t.quantity}x ` : ''}${RECIPES[t.recipeId].name}`
+                          : TECHNOLOGIES[t.techId].name}
+                      </span>
                       <span>{formatGameDuration(t.completedAtMs - state.virtualTimeMs)}</span>
                     </div>
                   ))}
                 </section>
               )}
 
+              {village && (
+                <CopperAgeBuildingPanels
+                  building={building}
+                  state={state}
+                  village={village}
+                  territory={territory}
+                  freeUnits={freeUnits}
+                />
+              )}
+
+              {/* Tier Upgrade (Resets Level to 1 at Next Tier) */}
+              {tierResetRule && (
+                <section className="flex items-center justify-between gap-2 rounded-lg border border-amber-800/70 bg-amber-950/30 p-3">
+                  <div>
+                    <div className="font-semibold text-amber-200">
+                      Advance Building to Tier {tierResetRule.targetTier} (Resets Lv 1)
+                    </div>
+                    {upgradePreview?.nextTier?.summary && (
+                      <div className="text-[11px] font-medium text-emerald-300">
+                        Improves: {upgradePreview.nextTier.summary}
+                      </div>
+                    )}
+                    <div className="text-[11px] text-slate-300">
+                      {Object.keys(tierResetRule.cost).length > 0 ? (
+                        <>
+                          Cost: <CostInline cost={tierResetRule.cost} inventory={state.inventory} />
+                        </>
+                      ) : (
+                        'Free Upgrade'
+                      )}
+                    </div>
+                    {!tierResetRule.allowed && (
+                      <div className="text-[11px] text-rose-400">{tierResetRule.reason}</div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={
+                      isAbandoned ||
+                      isUpgrading ||
+                      !tierResetRule.allowed ||
+                      freeUnits.builder < tierResetRule.buildersRequired ||
+                      !Object.entries(tierResetRule.cost).every(
+                        ([id, q]) => (state.inventory[id] ?? 0) >= q,
+                      )
+                    }
+                    onClick={() => onUpgradeBuildingTier?.(building.instanceId)}
+                    className={`rounded px-2.5 py-1 font-semibold ${
+                      !isAbandoned &&
+                      !isUpgrading &&
+                      tierResetRule.allowed &&
+                      freeUnits.builder >= tierResetRule.buildersRequired &&
+                      Object.entries(tierResetRule.cost).every(
+                        ([id, q]) => (state.inventory[id] ?? 0) >= q,
+                      )
+                        ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                        : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    Advance Tier
+                  </button>
+                </section>
+              )}
+
               {/* Level Upgrade */}
               {building.level < def.maxLevel && (
-                <section className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                <section className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                   <div>
                     <div className="font-semibold text-slate-100">Upgrade to Level {nextLevel}</div>
+                    {upgradePreview?.nextLevel?.summary && (
+                      <div className="text-[11px] font-medium text-emerald-300">
+                        Improves: {upgradePreview.nextLevel.summary}
+                      </div>
+                    )}
                     <div className="text-[11px] text-slate-400">
-                      Cost: {formatCostSummary(levelUpgradeCost)}
+                      Cost: <CostInline cost={levelUpgradeCost} inventory={state.inventory} />
                     </div>
                     {!levelUpgradeRule.allowed && (
                       <div className="text-[11px] text-rose-400">{levelUpgradeRule.reason}</div>
@@ -412,6 +644,7 @@ export default function BuildingModal({
                     type="button"
                     disabled={
                       isAbandoned ||
+                      isUpgrading ||
                       !levelUpgradeRule.allowed ||
                       !canAffordLevelUpgrade ||
                       freeUnits.builder < 1
@@ -419,6 +652,7 @@ export default function BuildingModal({
                     onClick={() => onUpgradeBuilding(building.instanceId)}
                     className={`rounded px-2.5 py-1 font-semibold ${
                       !isAbandoned &&
+                      !isUpgrading &&
                       levelUpgradeRule.allowed &&
                       canAffordLevelUpgrade &&
                       freeUnits.builder >= 1
@@ -442,10 +676,20 @@ export default function BuildingModal({
                           Advance to Tier {building.tier + 1} (
                           <span className="capitalize">{tierUpRule.targetAge}</span> Age)
                         </div>
+                        {upgradePreview?.nextTier?.summary && (
+                          <div className="text-[11px] font-medium text-emerald-300">
+                            Improves: {upgradePreview.nextTier.summary}
+                          </div>
+                        )}
                         <div className="text-[11px] text-slate-400">
-                          {Object.keys(tierUpRule.cost).length > 0
-                            ? `Cost: ${formatCostSummary(tierUpRule.cost)} · ${tierUpRule.buildTimeHours}h`
-                            : tierUpRule.reason}
+                          {Object.keys(tierUpRule.cost).length > 0 ? (
+                            <>
+                              Cost: <CostInline cost={tierUpRule.cost} inventory={state.inventory} />{' '}
+                              · {tierUpRule.buildTimeHours}h
+                            </>
+                          ) : (
+                            tierUpRule.reason
+                          )}
                         </div>
                         {tierUpRule.reason && Object.keys(tierUpRule.cost).length > 0 && (
                           <div className="text-[11px] text-rose-400">{tierUpRule.reason}</div>
@@ -455,6 +699,7 @@ export default function BuildingModal({
                         type="button"
                         disabled={
                           isAbandoned ||
+                          isUpgrading ||
                           !tierUpRule.allowed ||
                           freeUnits.builder < tierUpRule.buildersRequired ||
                           !Object.entries(tierUpRule.cost).every(
@@ -464,6 +709,7 @@ export default function BuildingModal({
                         onClick={() => onChangeMainTier(building.tier + 1)}
                         className={`rounded px-2.5 py-1 font-semibold ${
                           !isAbandoned &&
+                          !isUpgrading &&
                           tierUpRule.allowed &&
                           freeUnits.builder >= tierUpRule.buildersRequired &&
                           Object.entries(tierUpRule.cost).every(
@@ -481,11 +727,11 @@ export default function BuildingModal({
                   {tierDownRule?.allowed && (
                     <div className="flex items-center justify-between border-t border-slate-800 pt-2">
                       <div className="text-[11px] text-slate-400">
-                        Downgrade Main to Tier {building.tier - 1} (Free; keeps existing buildings).
+                        Downgrade Main to Tier {building.tier - 1} (Free)
                       </div>
                       <button
                         type="button"
-                        disabled={isAbandoned}
+                        disabled={isAbandoned || isUpgrading}
                         onClick={() => onChangeMainTier(building.tier - 1)}
                         className="rounded border border-slate-700 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >

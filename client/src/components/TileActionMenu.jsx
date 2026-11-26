@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatCostSummary } from '../utils/timeFormat.js';
+import CostInline from './CostInline.jsx';
 
 /**
  * Reusable compact `[Label] [0] [-] count [+] [All]` stepper row used in both the
@@ -111,24 +111,30 @@ function UnitQuantityRow({
  * @param {{ gatherer: number, hunter: number, builder: number }} props.freeUnits
  * @param {boolean} props.isExplored
  * @param {boolean} [props.isAbandoned=false]
+ * @param {object | null} [props.prospectionReport=null]
  * @param {() => void} props.onClose
  * @param {(action: string, units: object) => void} props.onDispatchAction
  * @param {(buildingId: string) => void} props.onBuildBuilding
+ * @param {() => void} [props.onProspect]
  * @returns {import('react').JSX.Element}
  */
 export default function TileActionMenu({
   menuState,
   buildingOptions,
+  inventory = {},
   freeUnits,
   isExplored,
   isAbandoned = false,
+  prospectionReport = null,
   onClose,
   onDispatchAction,
   onBuildBuilding,
+  onProspect,
 }) {
   const menuRef = useRef(null);
   const [teamOpen, setTeamOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [hoveredBuilding, setHoveredBuilding] = useState(null);
 
   const [quickG, setQuickG] = useState(() => (freeUnits.gatherer > 0 ? 1 : 0));
@@ -363,8 +369,63 @@ export default function TileActionMenu({
             <span aria-hidden="true">{buildOpen ? '▾' : '▸'}</span>
           </button>
 
+          {!isWaterTile && onProspect && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={(freeUnits.prospector ?? 0) < 1}
+              onClick={() => {
+                onProspect();
+                onClose();
+              }}
+              className={`flex items-center justify-between rounded border px-2 py-1.5 font-semibold transition ${
+                (freeUnits.prospector ?? 0) >= 1
+                  ? 'border-cyan-700/60 bg-slate-900 text-cyan-300 hover:bg-slate-800'
+                  : 'cursor-not-allowed border-slate-800 bg-slate-950/60 text-slate-500'
+              }`}
+            >
+              <span>Prospect Tile</span>
+              <span className="font-mono text-[10px]">
+                {freeUnits.prospector ?? 0} free
+              </span>
+            </button>
+          )}
+
+          {prospectionReport && (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                aria-expanded={reportOpen}
+                onClick={() => setReportOpen((p) => !p)}
+                className="flex items-center justify-between rounded border border-emerald-700/60 bg-emerald-950/40 px-2 py-1.5 font-semibold text-emerald-300 hover:bg-emerald-950/70"
+              >
+                <span>View Prospection Report</span>
+                <span aria-hidden="true">{reportOpen ? '▾' : '▸'}</span>
+              </button>
+              {reportOpen && (
+                <div className="space-y-1 rounded border border-emerald-800/60 bg-slate-950/90 p-2 font-mono text-[11px]">
+                  <div className="text-slate-200">
+                    Rock: <strong className="capitalize">{prospectionReport.rockType}</strong> · Forest:{' '}
+                    {Math.round(prospectionReport.forestDensity * 100)}%
+                  </div>
+                  {prospectionReport.ores.map((o) => (
+                    <div key={o.oreId} className="flex justify-between text-slate-300">
+                      <span>{o.name}</span>
+                      <span className="text-amber-300">
+                        {o.sampleLabel}
+                        {o.estimatedDeposit > 0 ? ` (~${o.estimatedDeposit.toLocaleString()})` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
           {buildOpen && (
             <div className="space-y-1 rounded-md border border-slate-800 bg-slate-950/90 p-1.5">
+              <div className="max-h-48 space-y-1 overflow-y-auto pr-0.5">
               {buildingOptions.map((option) => {
                 const { building, status } = option;
                 const styleClass =
@@ -390,38 +451,26 @@ export default function TileActionMenu({
                     className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-left transition ${styleClass}`}
                   >
                     <span className="font-medium">{building.name}</span>
-                    <span className="font-mono text-[10px] uppercase">{status}</span>
+                    <span className="font-mono text-[10px] text-slate-400">
+                      {building.buildTimeHours}h
+                    </span>
                   </button>
                 );
               })}
+              </div>
 
               {inspectedOption && (
                 <div className="mt-1 rounded border border-slate-800 bg-slate-900/90 p-2 text-[11px] leading-relaxed">
                   <div className="font-semibold text-slate-100">
-                    {inspectedOption.building.name} Requirements
+                    {inspectedOption.building.name}
                   </div>
                   <div className="text-slate-300">
-                    Cost: {formatCostSummary(inspectedOption.building.cost)}
+                    Cost: <CostInline cost={inspectedOption.building.cost} inventory={inventory} />
                   </div>
-                  <div className="text-slate-400">
-                    Time: {inspectedOption.building.buildTimeHours}h · Builders:{' '}
-                    {inspectedOption.building.buildersRequired} · Workers:{' '}
-                    {inspectedOption.building.workersRequired}
-                  </div>
-                  {inspectedOption.building.requiredTechs.length > 0 && (
-                    <div className="text-amber-300">
-                      Requires Tech: {inspectedOption.building.requiredTechs.join(', ')}
-                    </div>
-                  )}
-                  {inspectedOption.reason && (
-                    <div
-                      className={
-                        inspectedOption.status === 'red' ? 'text-rose-400' : 'text-slate-400'
-                      }
-                    >
-                      Status: {inspectedOption.reason}
-                    </div>
-                  )}
+                  {inspectedOption.reason &&
+                    inspectedOption.reason !== 'Insufficient resources.' && (
+                      <div className="text-rose-400">{inspectedOption.reason}</div>
+                    )}
                 </div>
               )}
             </div>

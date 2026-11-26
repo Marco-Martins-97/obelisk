@@ -4,6 +4,7 @@ import {
   DEFAULT_CONTINENT_SIZE,
   DEFAULT_TERRITORY_SIZE,
   ROCK_TYPES,
+  buildProspectionReport,
   generateContinent,
   generateTerritory,
   getAmbientTemperatureCelsius,
@@ -12,14 +13,17 @@ import {
 } from '@obelisk/shared';
 import BuildingModal from './components/BuildingModal.jsx';
 import ContinentCanvas from './components/ContinentCanvas.jsx';
+import ContinentExpeditionModal from './components/ContinentExpeditionModal.jsx';
 import MapControls from './components/MapControls.jsx';
 import TerritoryCanvas from './components/TerritoryCanvas.jsx';
 import TileActionMenu from './components/TileActionMenu.jsx';
 import TileInspector from './components/TileInspector.jsx';
 import TopNavbar from './components/TopNavbar.jsx';
 import {
+  StockpileModal,
+  TechnologiesModal,
   VillageHeaderBar,
-  VillageLogFooter,
+  VillageLogModal,
   VillageSidebarPanels,
 } from './components/VillageHud.jsx';
 import { useStoneAgeVillage } from './hooks/useStoneAgeVillage.js';
@@ -102,12 +106,15 @@ function PlayableVillageWorkspace({
     spawnTile,
     continentSize: continent.size,
     territory,
+    continent,
     fixedSpeedFactor: isOnline ? 6 : null,
   });
 
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
   const [tileMenu, setTileMenu] = useState(null);
+  const [continentMenuTile, setContinentMenuTile] = useState(null);
   const [activeMapView, setActiveMapView] = useState('territory');
+  const [activeHudModal, setActiveHudModal] = useState(null);
 
   const selectedBuilding =
     village.state.buildings.find((b) => b.instanceId === selectedBuildingId) ?? null;
@@ -121,6 +128,12 @@ function PlayableVillageWorkspace({
   const menuIsExplored = tileMenu
     ? village.territoryFogMask[tileMenu.y * territory.size + tileMenu.x] === 1
     : false;
+  const menuProspectionReport =
+    tileMenu &&
+    menuTile &&
+    village.state.tileDetails?.[`${tileMenu.x},${tileMenu.y}`]?.prospected
+      ? buildProspectionReport(menuTile, territory.rockType)
+      : null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -135,16 +148,18 @@ function PlayableVillageWorkspace({
           onResetVillage={() => {
             setSelectedBuildingId(null);
             setTileMenu(null);
+            setActiveHudModal(null);
             village.resetVillage();
           }}
         />
 
-        {topControls}
+        {typeof topControls === 'function' ? topControls(village) : topControls}
 
         <VillageHeaderBar
           village={village}
           spawnTile={spawnTile}
           onOpenBuilding={(b) => setSelectedBuildingId(b.instanceId)}
+          onOpenModal={setActiveHudModal}
         />
       </div>
 
@@ -185,6 +200,7 @@ function PlayableVillageWorkspace({
               villageCoords={spawnTile}
               selectedCoords={{ x: selectedTile.x, y: selectedTile.y }}
               onSelectTile={onSelectContinentTile}
+              onOpenTileMenu={(payload) => setContinentMenuTile(payload.tile)}
               onSwitchToTerritory={() => setActiveMapView('territory')}
             />
           )}
@@ -198,20 +214,20 @@ function PlayableVillageWorkspace({
               />
             )}
 
-            <VillageSidebarPanels village={village} />
+            <VillageSidebarPanels village={village} territory={territory} />
           </div>
         </div>
-
-        <VillageLogFooter logs={village.state.logs} />
       </main>
 
       {tileMenu && (
         <TileActionMenu
           menuState={{ ...tileMenu, tile: menuTile }}
           buildingOptions={menuBuildingOptions}
+          inventory={village.state.inventory}
           freeUnits={village.freeUnits}
           isExplored={menuIsExplored}
           isAbandoned={Boolean(village.state.isAbandoned)}
+          prospectionReport={menuProspectionReport}
           onClose={() => setTileMenu(null)}
           onDispatchAction={(action, units) =>
             village.dispatchTileAction({ action, x: tileMenu.x, y: tileMenu.y, units })
@@ -219,21 +235,50 @@ function PlayableVillageWorkspace({
           onBuildBuilding={(buildingId) =>
             village.startBuildBuilding({ buildingId, x: tileMenu.x, y: tileMenu.y })
           }
+          onProspect={() => village.prospectTile({ x: tileMenu.x, y: tileMenu.y })}
         />
       )}
 
       <BuildingModal
         building={selectedBuilding}
         state={village.state}
+        village={village}
+        territory={territory}
         maxPop={village.maxPop}
         popUsed={village.popUsed}
         freeUnits={village.freeUnits}
         onClose={() => setSelectedBuildingId(null)}
         onTrainUnit={village.trainUnit}
         onUpgradeBuilding={village.startUpgradeBuilding}
+        onUpgradeBuildingTier={village.startUpgradeBuildingTier}
         onChangeMainTier={village.changeMainTier}
         onStartCraft={village.startCraftRecipe}
         onStartResearch={village.startResearchTech}
+      />
+
+      <ContinentExpeditionModal
+        targetTile={continentMenuTile}
+        spawnTile={spawnTile}
+        village={village}
+        onClose={() => setContinentMenuTile(null)}
+      />
+
+      <StockpileModal
+        isOpen={activeHudModal === 'stockpile'}
+        village={village}
+        onClose={() => setActiveHudModal(null)}
+      />
+
+      <TechnologiesModal
+        isOpen={activeHudModal === 'techs'}
+        unlockedTechs={village.state.unlockedTechs}
+        onClose={() => setActiveHudModal(null)}
+      />
+
+      <VillageLogModal
+        isOpen={activeHudModal === 'logs'}
+        logs={village.state.logs}
+        onClose={() => setActiveHudModal(null)}
       />
     </div>
   );
@@ -334,7 +379,7 @@ function SandboxPage() {
     setSelectedCoords(null);
   };
 
-  const controls = (
+  const controls = (village) => (
     <MapControls
       seed={config.seed}
       onApplySeed={(next) => {
@@ -362,6 +407,10 @@ function SandboxPage() {
       onToggleObelisk={(val) => setConfig((prev) => ({ ...prev, showObelisk: val }))}
       showFog={config.showFog}
       onToggleFog={(val) => setConfig((prev) => ({ ...prev, showFog: val }))}
+      onUnlockTerritory={village.unlockAllTerritoryFog}
+      onUnlockContinent={village.unlockAllContinentFog}
+      onJumpDays={village.jumpSimulationDays}
+      onGrantResource={village.grantSandboxResource}
     />
   );
 

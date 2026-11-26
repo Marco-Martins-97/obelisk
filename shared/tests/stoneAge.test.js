@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BUILDING_LIST,
   BUILDINGS,
+  CROPS,
   DAYS_PER_MONTH,
   DAYS_PER_SEASON,
   DAYS_PER_YEAR,
   HOURS_PER_INGAME_DAY,
+  LIVESTOCK,
   ORES,
   PANNABLE_ORE_NUGGETS,
   REAL_MS_PER_INGAME_DAY,
@@ -21,45 +24,69 @@ import {
   TERRITORY_TILE_DISTANCE_KM,
   UNITS,
   WATER_BOWLS_PER_JAR,
+  advanceContinuousProduction,
+  advanceCropFieldsAndOrchards,
+  advanceDailyLivestock,
   advanceStarvationState,
   applyDailySpoilage,
+  buildProspectionReport,
+  calculateAnimalPenCapacity,
   calculateBuildTimestamps,
+  calculateContinentExpeditionPlan,
   calculateDailySurvival,
+  calculateFarmMaxAttachments,
+  calculateFarmSeedCapacity,
   calculateMaxPopulation,
   calculatePopUsed,
   calculateStorageCapacity,
   calculateStorageUsed,
   calculateTeamActionTimestamps,
+  calculateTierLevelValue,
   calculateTileDistanceKm,
   calculateTotalStoredFood,
   calculateUnitActionTimestamps,
   calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
+  classifyOreDensitySample,
   classifyTerritoryTile,
   consumeStoredFoodFEFO,
   createBuilding,
+  createEmptyCropPlot,
+  createEmptyOrchardPlot,
   createInitialTerritoryFog,
   createPrng,
   createRecipe,
   createResource,
   createTechnology,
   createUnit,
+  fertilizeCropPlot,
   generateContinent,
   getAmbientTemperatureCelsius,
   getBestUnlockedTool,
+  getBuildingDailyProduction,
+  getBuildingTierUpgradeRule,
+  getBuildingUpgradePreview,
   getCalendarState,
   getExploredBounds,
   getMainTierChangeRule,
   getStarvationStageInfo,
   getTaskPhase,
+  getVillageDailyProductionSummary,
+  getWallBonuses,
   isTechTriggerSatisfied,
   normalizedTempToCelsius,
   pickStarterSpawnTile,
+  plantCropPlot,
+  plantOrchardPlot,
+  resolveContinentExpedition,
+  resolveCropHarvest,
+  resolveOrchardHarvest,
   resolveTeamActionYield,
   revealBox3x3,
   rollTileActionYield,
   trimUnitsBalanced,
   unlockContinentRingIfTerritoryComplete,
+  validateBuildingPlacement,
 } from '../index.js';
 
 describe('Stone Age templates, starter pools & linear sizeClass', () => {
@@ -476,7 +503,11 @@ describe('Probabilistic tile yields, collect_water & biome classification', () =
     expect(sawNothing).toBe(true);
     expect(fieldItems.has('straw')).toBe(true);
     expect(fieldItems.has('small_stones')).toBe(true);
-    expect(fieldItems.has('seeds')).toBe(true);
+    expect(fieldItems.has('roots')).toBe(true);
+    expect(RESOURCES.roots.edible).toBe(true);
+    expect(RESOURCES.roots.foodValue).toBe(1);
+    expect(CROPS.flax.seedItemId).toBe('roots');
+    expect(CROPS.vegetables.seedItemId).toBe('roots');
 
     const waterDrops = new Set();
     for (let i = 0; i < 120; i += 1) {
@@ -816,5 +847,254 @@ describe('Storage pooling (M1), FEFO auto-eating (C1), fractional spoilage (S1),
     const heavyOnly = trimUnitsBalanced({ heavy: 2 }, 1, { heavy: 2 });
     expect(heavyOnly.units).toEqual({ heavy: 1 });
     expect(heavyOnly.trimmedTotal).toBe(1);
+  });
+});
+
+describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-production, farming, livestock & expeditions', () => {
+  it('enforces fractional tier-to-level cap (< next tier base) and Tier upgrade Lv 1 reset rule', () => {
+    const mainBases = BUILDINGS.main.storageTierBases; // { 1: 250, 2: 1000, 3: 5000 }
+    expect(calculateTierLevelValue(mainBases, 1, 1, 3)).toBe(250);
+    expect(calculateTierLevelValue(mainBases, 1, 2, 3)).toBe(500);
+    expect(calculateTierLevelValue(mainBases, 1, 3, 3)).toBe(750);
+    expect(calculateTierLevelValue(mainBases, 1, 3, 3)).toBeLessThan(1000);
+    expect(calculateTierLevelValue(mainBases, 2, 1, 3)).toBe(1000);
+    expect(calculateTierLevelValue(mainBases, 2, 3, 3)).toBeLessThan(5000);
+    // Even if maxLevel is raised to 10, level 10 of Tier 1 stays strictly < Tier 2 base (1000).
+    expect(calculateTierLevelValue(mainBases, 1, 10, 10)).toBeLessThan(1000);
+
+    // Building at maxLevel (3) upgrades to Tier 2 (resetting to Lv 1) only when Main >= Tier 2.
+    const lockedTier = getBuildingTierUpgradeRule({
+      building: { buildingId: 'house', tier: 1, level: 3, status: 'active' },
+      mainTier: 1,
+    });
+    expect(lockedTier.allowed).toBe(false);
+
+    const readyTier = getBuildingTierUpgradeRule({
+      building: { buildingId: 'house', tier: 1, level: 3, status: 'active' },
+      mainTier: 2,
+    });
+    expect(readyTier.allowed).toBe(true);
+    expect(readyTier.targetTier).toBe(2);
+
+    // Tier 2 House Lv 1 starts at 40 maxPop (strictly above Tier 1 Lv 3 = 30).
+    expect(calculateMaxPopulation([{ buildingId: 'house', tier: 1, level: 3, status: 'active' }])).toBe(30);
+    expect(calculateMaxPopulation([{ buildingId: 'house', tier: 2, level: 1, status: 'active' }])).toBe(40);
+  });
+
+  it('provides Smithy with build cost, 6 Stone/Bone -> 6 Copper tool branches, 1-pop Scouts/Caravans, Wall bonus & Bronze trigger', () => {
+    expect(BUILDINGS.smithy.cost).toEqual({ sticks: 8, small_stones: 6, clay: 4, pelts: 2 });
+    expect(TECHNOLOGIES.bone_pickaxe.cost).toEqual({ bones: 2, sticks: 3 });
+    expect(TECHNOLOGIES.copper_pickaxe.prerequisites).toEqual(['bone_pickaxe']);
+    expect(UNITS.scout.popCost).toBe(1);
+    expect(UNITS.scout.requiredAnimal).toEqual({ horse: 1 });
+    expect(UNITS.caravan.popCost).toBe(1);
+    expect(UNITS.caravan.requiredAnimal).toEqual({ donkey: 1 });
+
+    expect(RECIPES.smelt_bronze_ingot.unlocksTech).toBe('bronze_age');
+    expect(getMainTierChangeRule({
+      currentMainTier: 2,
+      targetMainTier: 3,
+      unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age', 'bronze_age'],
+    }).targetAge).toBe('bronze');
+
+    expect(getWallBonuses({ tier: 2, level: 1 }).defensePercent).toBe(15);
+    expect(BUILDING_LIST.length).toBeGreaterThanOrEqual(19);
+  });
+
+  it('prospects density samples and runs multi-ore Mines & placement rules with deposit depletion', () => {
+    expect(classifyOreDensitySample(0.02)).toBe('Nothing Found');
+    expect(classifyOreDensitySample(0.08)).toBe('Tiny Sample');
+    expect(classifyOreDensitySample(0.2)).toBe('Small Sample');
+    expect(classifyOreDensitySample(0.45)).toBe('Medium Sample');
+    expect(classifyOreDensitySample(0.65)).toBe('Large Sample');
+    expect(classifyOreDensitySample(0.9)).toBe('Very Large Sample');
+
+    const richTile = {
+      isWater: false,
+      buildable: true,
+      forestDensity: 0.2,
+      ores: { copper: 0.8, tin: 0.4, gold: 0.02 },
+    };
+    const report = buildProspectionReport(richTile, 'limestone');
+    expect(report.ores.find((o) => o.oreId === 'copper')).toMatchObject({
+      sampleLabel: 'Very Large Sample',
+      estimatedDeposit: 80000,
+    });
+    expect(report.ores.find((o) => o.oreId === 'tin')).toMatchObject({
+      sampleLabel: 'Medium Sample',
+      estimatedDeposit: 40000,
+    });
+
+    const bldMine = { instanceId: 'mine-1', buildingId: 'mine', x: 11, y: 11, tier: 2, level: 1, status: 'active' };
+    const fakeTerritory = {
+      size: 25,
+      tiles: Array.from({ length: 625 }, (_, i) =>
+        i === 11 * 25 + 11 ? richTile : i === 12 * 25 + 11 ? { isWater: true, buildable: false, forestDensity: 0 } : { isWater: false, buildable: true, forestDensity: 0.7 },
+      ),
+    };
+
+    const rates = getBuildingDailyProduction({ building: bldMine, tile: richTile });
+    // copper 0.8 * 40 = 32/day; tin 0.4 * 40 = 16/day; gold < 0.05 skipped.
+    expect(rates.find((r) => r.oreId === 'copper').ratePerDay).toBe(32);
+    expect(rates.find((r) => r.oreId === 'tin').ratePerDay).toBe(16);
+    expect(rates.find((r) => r.oreId === 'gold')).toBeUndefined();
+
+    // Advance 1 full in-game day with Warehouse storage -> harvests 32 copper_ore & 16 tin_ore & deducts deposits.
+    const sim = advanceContinuousProduction({
+      buildings: [{ buildingId: 'warehouse', tier: 2, level: 1, status: 'active' }, bldMine],
+      territory: fakeTerritory,
+      inventory: {},
+      water: 5,
+      waterCapacity: 25,
+      deltaVirtualMs: REAL_MS_PER_INGAME_DAY,
+    });
+    expect(sim.inventory.copper_ore).toBe(32);
+    expect(sim.inventory.tin_ore).toBe(16);
+    expect(sim.tileDetails['11,11'].oreLeft.copper).toBe(80000 - 32);
+
+    // Placement checks: Timber Camp fails on non-forest, Clay Pit needs adjacent water.
+    expect(validateBuildingPlacement({ buildingId: 'timber_camp', x: 11, y: 11, territory: fakeTerritory }).allowed).toBe(false);
+    expect(validateBuildingPlacement({ buildingId: 'clay_pit', x: 11, y: 11, territory: fakeTerritory }).allowed).toBe(true);
+    expect(BUILDINGS.clay_pit.baseDepositAmount).toBe(10000);
+  });
+
+  it('handles Farmstead vaults, partial 42/64 Crop Fields, Nutrients A/B/C, Orchards & Livestock upkeep', () => {
+    const buildings = [
+      { buildingId: 'farm', x: 10, y: 10, tier: 2, level: 1, status: 'active' },
+      { buildingId: 'crop_field', x: 10, y: 11, tier: 2, level: 1, status: 'active' },
+      { buildingId: 'animal_pen', x: 11, y: 10, tier: 2, level: 1, status: 'active' },
+      { buildingId: 'orchard', x: 11, y: 11, tier: 2, level: 1, status: 'active' },
+    ];
+    expect(calculateFarmSeedCapacity(buildings)).toBe(128);
+    expect(calculateFarmMaxAttachments(buildings)).toBe(3);
+    expect(calculateAnimalPenCapacity(buildings)).toBe(6);
+
+    // Partial seed plant: 42 available out of 64 slots.
+    const planted = plantCropPlot({ plot: createEmptyCropPlot(), cropId: 'grain', availableSeedQty: 42 });
+    expect(planted.planted).toBe(42);
+    expect(planted.plot.survivingSlots).toBe(42);
+
+    // Grow for 60 days in safe temp -> Ready; wait 30 more days without harvest -> withered.
+    let details = advanceCropFieldsAndOrchards({
+      buildings,
+      tileDetails: { '10,11': { cropPlot: planted.plot }, '11,11': { orchardPlot: createEmptyOrchardPlot() } },
+      ambientTempC: 18,
+      elapsedDays: CROPS.grain.growthDays,
+    });
+    expect(details['10,11'].cropPlot.status).toBe('ready');
+
+    const harvest = resolveCropHarvest({ plot: details['10,11'].cropPlot });
+    expect(harvest.itemId).toBe('grain');
+    expect(harvest.harvestedQty).toBeGreaterThanOrEqual(120);
+
+    const fertilized = fertilizeCropPlot(details['10,11'].cropPlot);
+    expect(fertilized.nutrients.A).toBeGreaterThan(details['10,11'].cropPlot.nutrients.A);
+
+    details = advanceCropFieldsAndOrchards({
+      buildings,
+      tileDetails: details,
+      ambientTempC: 18,
+      elapsedDays: CROPS.grain.harvestWindowDays,
+    });
+    expect(details['10,11'].cropPlot.status).toBe('withered');
+
+    // Orchard takes 336 days and harvests in Summer/Autumn once per year.
+    const orchardPlanted = plantOrchardPlot({ plot: createEmptyOrchardPlot(), availableSaplings: 5 });
+    const orchardYear = advanceCropFieldsAndOrchards({
+      buildings,
+      tileDetails: { '11,11': { orchardPlot: orchardPlanted.plot } },
+      ambientTempC: 18,
+      elapsedDays: 336,
+    });
+    const apples = resolveOrchardHarvest({ plot: orchardYear['11,11'].orchardPlot, season: 'autumn', year: 2 });
+    expect(apples.itemId).toBe('apples');
+    expect(apples.harvestedQty).toBe(40); // 5 trees * 8
+
+    // Livestock daily feeding: 1 grain + 1 water -> 1 manure + goat milk / sheep wool / chicken eggs.
+    const live = advanceDailyLivestock({
+      animals: { goat: 1, sheep: 1, chicken: 1, horse: 1 },
+      inventory: { grain: 4 },
+      water: 10,
+    });
+    expect(live.produced).toEqual({ manure: 4, milk: 1, wool: 1, eggs: 1 });
+    expect(live.water).toBe(6);
+    expect(live.inventory.grain).toBeUndefined();
+    expect(LIVESTOCK.horse.dailyManure).toBe(1);
+  });
+
+  it('plans Continent expeditions (distance * 25) and restricts brought loot to missions with a Caravan', () => {
+    const plan = calculateContinentExpeditionPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 14, y: 10 },
+      units: { scout: 1, prospector: 1, caravan: 1 },
+    });
+    // 4 Continent tiles * 25 sub-tiles * 0.5km = 50 km
+    expect(plan.distanceKm).toBe(50);
+    expect(plan.carryCapacity).toBe(150);
+    expect(plan.foodNeeded).toBeGreaterThanOrEqual(3);
+
+    const fog = new Uint8Array(100 * 100);
+    const tile = { x: 14, y: 10, biome: 'grassland', rockType: 'limestone' };
+
+    const scoutOnly = resolveContinentExpedition({
+      continentFog: fog,
+      continentSize: 100,
+      targetTile: tile,
+      targetRockOres: ['copper', 'flux'],
+      units: { scout: 1, gatherer: 2 },
+      rng: createPrng(42),
+    });
+    expect(scoutOnly.newlyRevealedCount).toBe(9);
+    expect(scoutOnly.intelOnly).toBe(true);
+    expect(scoutOnly.itemsBroughtBack).toEqual({});
+
+    const withCaravan = resolveContinentExpedition({
+      continentFog: fog,
+      continentSize: 100,
+      targetTile: tile,
+      targetRockOres: ['copper', 'flux'],
+      units: { scout: 1, prospector: 1, gatherer: 1, caravan: 1 },
+      rng: createPrng(42),
+    });
+    expect(withCaravan.intelOnly).toBe(false);
+    expect(Object.keys(withCaravan.itemsBroughtBack).length).toBeGreaterThan(0);
+  });
+
+  it('computes next-level/tier upgrade previews and aggregated daily village production summaries', () => {
+    const mainPreview = getBuildingUpgradePreview({
+      building: { buildingId: 'main', tier: 1, level: 1 },
+    });
+    expect(mainPreview.nextLevel.targetLevel).toBe(2);
+    expect(mainPreview.nextLevel.summary).toContain('+10 Max Pop');
+    expect(mainPreview.nextLevel.summary).toContain('+250 Storage');
+    expect(mainPreview.nextLevel.summary).toContain('+15 bowls Water Cap');
+    expect(mainPreview.nextTier.summary).toContain('+30 Max Pop');
+    expect(mainPreview.nextTier.summary).toContain('+750 Storage');
+
+    const houseLv3Preview = getBuildingUpgradePreview({
+      building: { buildingId: 'house', tier: 1, level: 3 },
+    });
+    expect(houseLv3Preview.nextLevel).toBeNull();
+    expect(houseLv3Preview.nextTier.summary).toContain('+10 Max Pop');
+
+    const wallUnbuiltPreview = getBuildingUpgradePreview({
+      building: { buildingId: 'wall', tier: 2, level: 0 },
+    });
+    expect(wallUnbuiltPreview.nextLevel.summary).toContain('+15% Wall Defense');
+
+    const summary = getVillageDailyProductionSummary({
+      buildings: [
+        { buildingId: 'well', x: 10, y: 10, tier: 2, level: 1, status: 'active' },
+        { buildingId: 'animal_pen', x: 11, y: 10, tier: 2, level: 1, status: 'active' },
+      ],
+      territory: {
+        size: 25,
+        tiles: Array.from({ length: 625 }, () => ({ isWater: false, buildable: true, forestDensity: 0 })),
+      },
+      animals: { goat: 2, horse: 1 },
+    });
+    expect(summary.find((s) => s.resourceId === 'water').ratePerDay).toBe(30);
+    expect(summary.find((s) => s.resourceId === 'manure').ratePerDay).toBe(3);
+    expect(summary.find((s) => s.resourceId === 'milk').ratePerDay).toBe(2);
   });
 });
