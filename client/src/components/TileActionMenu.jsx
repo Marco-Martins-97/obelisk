@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  BUILDINGS,
+  ORCHARD_TREES,
+  calculateBuildingRepairCost,
+  calculateRepairAllCost,
+  canBuildOrUpgradeBuilding,
+  canDemolishBuilding,
+  groupBuildingRecipesByOutput,
+} from '@obelisk/shared';
 import CostInline from './CostInline.jsx';
+import { formatRealHoursHMS } from '../utils/timeFormat.js';
 
 /**
  * Reusable compact `[Label] [0] [-] count [+] [All]` stepper row used in both the
@@ -121,6 +131,9 @@ function UnitQuantityRow({
 export default function TileActionMenu({
   menuState,
   buildingOptions,
+  buildingOnTile = null,
+  villageState = null,
+  speedFactor = null,
   inventory = {},
   freeUnits,
   isExplored,
@@ -130,12 +143,23 @@ export default function TileActionMenu({
   onDispatchAction,
   onBuildBuilding,
   onProspect,
+  onOpenBuilding,
+  onRepairBuilding,
+  onRepairAllBuildings,
+  onUpgradeBuilding,
+  onDemolishBuilding,
+  onQuickCraft,
+  onQuickHarvest,
 }) {
+  const activeSpeed = speedFactor ?? villageState?.speedFactor ?? 6;
+  const effPenalty = villageState?.efficiencyPenalty ?? 0;
   const menuRef = useRef(null);
   const [teamOpen, setTeamOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [hoveredBuilding, setHoveredBuilding] = useState(null);
+  const [showTileActions, setShowTileActions] = useState(false);
+  const [confirmDestroy, setConfirmDestroy] = useState(false);
 
   const [quickG, setQuickG] = useState(() => (freeUnits.gatherer > 0 ? 1 : 0));
   const [quickH, setQuickH] = useState(() => (freeUnits.hunter > 0 ? 1 : 0));
@@ -217,8 +241,262 @@ export default function TileActionMenu({
 
       {isAbandoned ? (
         <p className="px-1 py-2 text-red-300">
-          Village Abandoned. Reset Village to dispatch teams or construct buildings.
+          Village Abandoned. Click Start New Village or Reset Village to continue.
         </p>
+      ) : buildingOnTile && !showTileActions ? (
+        (() => {
+          const bDef = BUILDINGS[buildingOnTile.buildingId];
+          const cond = Math.round(buildingOnTile.condition ?? 100);
+          const repairCost = calculateBuildingRepairCost(buildingOnTile);
+          const needsRepair = Object.keys(repairCost).length > 0;
+          const canAffordRepair =
+            needsRepair &&
+            Object.entries(repairCost).every(([id, q]) => (inventory[id] ?? 0) >= q);
+
+          const repairAllCost =
+            buildingOnTile.buildingId === 'main' && villageState?.buildings
+              ? calculateRepairAllCost(villageState.buildings)
+              : {};
+          const hasDamagedAll = Object.keys(repairAllCost).length > 0;
+          const canAffordRepairAll =
+            hasDamagedAll &&
+            Object.entries(repairAllCost).every(([id, q]) => (inventory[id] ?? 0) >= q);
+
+          const mainBld =
+            villageState?.buildings?.find((b) => b.buildingId === 'main') ?? buildingOnTile;
+          const nextLv = buildingOnTile.level + 1;
+          const upgRule = bDef
+            ? canBuildOrUpgradeBuilding({
+                buildingId: buildingOnTile.buildingId,
+                currentLevel: buildingOnTile.level,
+                targetLevel: nextLv,
+                buildingTier: buildingOnTile.tier,
+                mainTier: mainBld?.tier ?? 1,
+                unlockedTechs: villageState?.unlockedTechs ?? [],
+              })
+            : { allowed: false };
+          const upgCost = bDef
+            ? Object.fromEntries(
+                Object.entries(bDef.cost ?? {}).map(([id, q]) => [
+                  id,
+                  q * (buildingOnTile.tier ?? bDef.tier) * nextLv,
+                ]),
+              )
+            : {};
+          const canQuickUpgrade =
+            buildingOnTile.status === 'active' &&
+            buildingOnTile.level < (bDef?.maxLevel ?? 3) &&
+            upgRule.allowed &&
+            (freeUnits.builder ?? 0) >= 1 &&
+            Object.entries(upgCost).every(([id, q]) => (inventory[id] ?? 0) >= q);
+
+          const craftableGroup =
+            buildingOnTile.status === 'active' && bDef?.craftsRecipes?.length > 0
+              ? groupBuildingRecipesByOutput({
+                  recipeIds: bDef.craftsRecipes,
+                  unlockedTechs: villageState?.unlockedTechs ?? [],
+                  inventory,
+                  water: villageState?.water ?? 0,
+                }).find((g) => g.hasAnyCraftable)
+              : null;
+
+          const detail = villageState?.tileDetails?.[`${buildingOnTile.x},${buildingOnTile.y}`];
+          const cropReady =
+            buildingOnTile.buildingId === 'crop_field' && detail?.cropPlot?.status === 'ready';
+          const orchardPlot = detail?.orchardPlot;
+          const orchardTree = orchardPlot
+            ? (ORCHARD_TREES[orchardPlot.treeId] ?? ORCHARD_TREES.apple_tree)
+            : null;
+          const orchardReady =
+            buildingOnTile.buildingId === 'orchard' &&
+            Boolean(orchardPlot) &&
+            orchardPlot.survivingSlots > 0 &&
+            orchardPlot.grownDays >= (orchardTree?.matureDays ?? 336);
+
+          const demolishCheck =
+            buildingOnTile.buildingId !== 'main'
+              ? canDemolishBuilding({
+                  building: buildingOnTile,
+                  buildings: villageState?.buildings ?? [],
+                  units: villageState?.units ?? {},
+                  starvationPopLoss: villageState?.starvationPopLoss ?? 0,
+                })
+              : null;
+
+          return (
+            <div className="flex flex-col gap-1.5">
+              <div className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5">
+                <div className="font-semibold text-amber-200">{bDef?.name}</div>
+                <div className="text-[11px] text-slate-400">
+                  T{buildingOnTile.tier} L{buildingOnTile.level} · Condition {cond}%
+                </div>
+              </div>
+
+              {onOpenBuilding && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onOpenBuilding(buildingOnTile);
+                    onClose();
+                  }}
+                  className="rounded bg-amber-500 px-2 py-1.5 text-left font-semibold text-slate-950 hover:bg-amber-400"
+                >
+                  Open {bDef?.name}
+                </button>
+              )}
+
+              {needsRepair && onRepairBuilding && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!canAffordRepair}
+                  onClick={() => {
+                    onRepairBuilding(buildingOnTile.instanceId);
+                    onClose();
+                  }}
+                  className={`rounded border px-2 py-1.5 text-left ${
+                    canAffordRepair
+                      ? 'border-amber-600/60 bg-slate-900 text-amber-200 hover:bg-slate-800'
+                      : 'cursor-not-allowed border-slate-800 bg-slate-950 text-slate-500'
+                  }`}
+                >
+                  <div className="font-semibold">Repair ({cond}% → 100%)</div>
+                  <div className="text-[10px]">
+                    <CostInline cost={repairCost} inventory={inventory} />
+                  </div>
+                </button>
+              )}
+
+              {buildingOnTile.buildingId === 'main' && hasDamagedAll && onRepairAllBuildings && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!canAffordRepairAll}
+                  onClick={() => {
+                    onRepairAllBuildings();
+                    onClose();
+                  }}
+                  className={`rounded border px-2 py-1.5 text-left ${
+                    canAffordRepairAll
+                      ? 'border-sky-600/60 bg-slate-900 text-sky-200 hover:bg-slate-800'
+                      : 'cursor-not-allowed border-slate-800 bg-slate-950 text-slate-500'
+                  }`}
+                >
+                  <div className="font-semibold">Repair All Buildings</div>
+                  <div className="text-[10px]">
+                    <CostInline cost={repairAllCost} inventory={inventory} />
+                  </div>
+                </button>
+              )}
+
+              {(cropReady || orchardReady) && onQuickHarvest && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onQuickHarvest({
+                      x: buildingOnTile.x,
+                      y: buildingOnTile.y,
+                      isOrchard: orchardReady,
+                    });
+                    onClose();
+                  }}
+                  className="rounded border border-emerald-600/60 bg-emerald-950/60 px-2 py-1.5 text-left font-semibold text-emerald-200 hover:bg-emerald-900/70"
+                >
+                  Quick Harvest
+                </button>
+              )}
+
+              {craftableGroup && onQuickCraft && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onQuickCraft({
+                      buildingInstanceId: buildingOnTile.instanceId,
+                      recipeId: craftableGroup.activeRecipe.id,
+                    });
+                    onClose();
+                  }}
+                  className="rounded border border-sky-700/60 bg-sky-950/50 px-2 py-1.5 text-left font-semibold text-sky-200 hover:bg-sky-900/60"
+                >
+                  Quick Craft 1× {craftableGroup.outputName}
+                </button>
+              )}
+
+              {buildingOnTile.level < (bDef?.maxLevel ?? 3) && onUpgradeBuilding && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!canQuickUpgrade}
+                  onClick={() => {
+                    onUpgradeBuilding(buildingOnTile.instanceId);
+                    onClose();
+                  }}
+                  className={`rounded border px-2 py-1.5 text-left font-semibold ${
+                    canQuickUpgrade
+                      ? 'border-emerald-700/60 bg-slate-900 text-emerald-300 hover:bg-slate-800'
+                      : 'cursor-not-allowed border-slate-800 bg-slate-950 text-slate-500'
+                  }`}
+                >
+                  <div>Upgrade to Lv {nextLv}</div>
+                  <div className="text-[10px] font-normal text-slate-400">
+                    <CostInline cost={upgCost} inventory={inventory} /> ·{' '}
+                    {formatRealHoursHMS(bDef?.buildTimeHours ?? 0, activeSpeed, effPenalty)}
+                  </div>
+                </button>
+              )}
+
+              {buildingOnTile.buildingId !== 'main' && onDemolishBuilding && demolishCheck && (
+                !confirmDestroy ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!demolishCheck.allowed}
+                    onClick={() => setConfirmDestroy(true)}
+                    className="rounded border border-rose-800/70 bg-rose-950/40 px-2 py-1.5 text-left font-semibold text-rose-300 hover:bg-rose-950/80 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <div>Destroy Building</div>
+                    {!demolishCheck.allowed && (
+                      <div className="text-[10px] font-normal text-rose-400">
+                        {demolishCheck.reason}
+                      </div>
+                    )}
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDemolishBuilding(buildingOnTile.instanceId);
+                        onClose();
+                      }}
+                      className="flex-1 rounded bg-rose-600 px-2 py-1 font-semibold text-white hover:bg-rose-500"
+                    >
+                      Confirm Destroy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDestroy(false)}
+                      className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowTileActions(true)}
+                className="mt-1 border-t border-slate-800 pt-1.5 text-left text-[11px] text-slate-400 hover:text-slate-200"
+              >
+                Tile Actions (Gather / Hunt) ▸
+              </button>
+            </div>
+          );
+        })()
       ) : !isExplored ? (
         <p className="px-1 py-2 text-slate-400">
           Unexplored Fog tile. Send a team to an adjacent explored tile to reveal on return.
@@ -452,7 +730,7 @@ export default function TileActionMenu({
                   >
                     <span className="font-medium">{building.name}</span>
                     <span className="font-mono text-[10px] text-slate-400">
-                      {building.buildTimeHours}h
+                      {formatRealHoursHMS(building.buildTimeHours, activeSpeed, effPenalty)}
                     </span>
                   </button>
                 );
@@ -465,7 +743,8 @@ export default function TileActionMenu({
                     {inspectedOption.building.name}
                   </div>
                   <div className="text-slate-300">
-                    Cost: <CostInline cost={inspectedOption.building.cost} inventory={inventory} />
+                    Cost: <CostInline cost={inspectedOption.building.cost} inventory={inventory} /> ·{' '}
+                    {formatRealHoursHMS(inspectedOption.building.buildTimeHours, activeSpeed, effPenalty)}
                   </div>
                   {inspectedOption.reason &&
                     inspectedOption.reason !== 'Insufficient resources.' && (

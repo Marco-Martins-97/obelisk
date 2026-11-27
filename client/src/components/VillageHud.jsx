@@ -91,7 +91,13 @@ function useNativeDialogSync(dialogRef, isOpen, onClose) {
  * @param {(modalKey: 'stockpile' | 'techs' | 'logs') => void} [props.onOpenModal]
  * @returns {import('react').JSX.Element}
  */
-export function VillageHeaderBar({ village, spawnTile, onOpenBuilding, onOpenModal }) {
+export function VillageHeaderBar({
+  village,
+  spawnTile,
+  onOpenBuilding,
+  onOpenModal,
+  onStartNewVillage = null,
+}) {
   const {
     state,
     mainBuilding,
@@ -206,10 +212,21 @@ export function VillageHeaderBar({ village, spawnTile, onOpenBuilding, onOpenMod
       {state.isAbandoned && (
         <div
           role="alert"
-          className="mx-auto mt-2 max-w-7xl rounded border border-red-700/80 bg-red-950/75 px-3 py-1.5 text-[11px] text-red-200"
+          className="mx-auto mt-2 flex max-w-7xl flex-wrap items-center justify-between gap-2 rounded border border-red-700/80 bg-red-950/75 px-3 py-1.5 text-[11px] text-red-200"
         >
-          <strong>Abandoned Village:</strong> Maximum population fell to 0 after prolonged famine or
-          dehydration. Click <strong>Reset Village</strong> to start a fresh settlement.
+          <span>
+            <strong>Abandoned Village:</strong> Settlement collapsed after prolonged deprivation or
+            structural decay.
+          </span>
+          {onStartNewVillage && (
+            <button
+              type="button"
+              onClick={onStartNewVillage}
+              className="rounded bg-amber-500 px-2.5 py-1 font-semibold text-slate-950 hover:bg-amber-400"
+            >
+              Start New Village
+            </button>
+          )}
         </div>
       )}
     </section>
@@ -282,17 +299,34 @@ export function VillageSidebarPanels({ village, territory = null }) {
           Units (Free / Total)
         </h3>
         <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
-          {Object.keys(UNITS).map((unitId) => (
-            <div
-              key={unitId}
-              className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5 text-center"
-            >
-              <div className="text-[10px] text-slate-400">{UNITS[unitId].name}</div>
-              <div className="font-bold text-emerald-300">
-                {freeUnits[unitId]}/{state.units[unitId] ?? 0}
+          {Object.keys(UNITS).map((unitId) => {
+            const totalCount = state.units[unitId] ?? 0;
+            const freeCount = freeUnits[unitId] ?? 0;
+            return (
+              <div
+                key={unitId}
+                className="flex flex-col items-center justify-between rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5 text-center"
+              >
+                <div className="text-[10px] text-slate-400">{UNITS[unitId].name}</div>
+                <div className="flex items-center justify-center gap-1.5 font-bold text-emerald-300">
+                  <span>
+                    {freeCount}/{totalCount}
+                  </span>
+                  {totalCount > 0 && village.dismissUnit && (
+                    <button
+                      type="button"
+                      aria-label={`Dispense 1 ${UNITS[unitId].name}`}
+                      disabled={Boolean(state.isAbandoned) || freeCount < 1}
+                      onClick={() => village.dismissUnit(unitId)}
+                      className="rounded border border-rose-700/70 bg-rose-950/60 px-1 py-0 text-[9px] font-semibold text-rose-200 hover:bg-rose-900/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      -1
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

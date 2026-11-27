@@ -230,11 +230,13 @@ export function calculateTierLevelValue(tierBases, tier = 1, level = 1, maxLevel
 }
 
 /**
- * Calculates pooled village storage capacity across all active buildings.
+ * Calculates pooled village storage capacity across all active buildings plus portable containers
+ * (`woven_basket`: +15 general bulk each; `clay_vessel`: +20 preserved food capacity each at 0.7x spoil).
  * Excludes specialized Farmstead seed vaults (`calculateFarmSeedCapacity`) and separates
- * general capacity (Main + Warehouses) from preserved food capacity (Granaries).
+ * general capacity (Main + Warehouses + Baskets) from preserved food capacity (Granaries + Vessels).
  *
  * @param {Array<{ buildingId: string, tier?: number, level?: number, status?: string }>} buildings - Placed buildings.
+ * @param {Record<string, number> | Map<string, number>} [inventory={}] - Optional item map for container bonuses.
  * @returns {{
  *   generalCapacity: number,
  *   preservedFoodCapacity: number,
@@ -242,7 +244,7 @@ export function calculateTierLevelValue(tierBases, tier = 1, level = 1, maxLevel
  *   preservedSpoilageMultiplier: number,
  * }} Pooled storage capacities and preservation modifier.
  */
-export function calculateStorageCapacity(buildings) {
+export function calculateStorageCapacity(buildings, inventory = {}) {
   let generalCapacity = 0;
   let preservedFoodCapacity = 0;
   let bestSpoilageMultiplier = 1;
@@ -276,6 +278,16 @@ export function calculateStorageCapacity(buildings) {
         bestSpoilageMultiplier = def.spoilageMultiplier;
       }
     }
+  }
+
+  const getQty = (id) =>
+    inventory instanceof Map ? (inventory.get(id) ?? 0) : (inventory?.[id] ?? 0);
+  const basketQty = Math.max(0, Math.floor(getQty('woven_basket')));
+  const vesselQty = Math.max(0, Math.floor(getQty('clay_vessel')));
+  generalCapacity += basketQty * 15;
+  if (vesselQty > 0) {
+    preservedFoodCapacity += vesselQty * 20;
+    bestSpoilageMultiplier = Math.min(bestSpoilageMultiplier, 0.7);
   }
 
   return {
@@ -422,7 +434,10 @@ export function applyDailySpoilage({
     return { inventory: nextInventory, spoilageCarry: nextCarry, spoiled };
   }
 
-  const { preservedFoodCapacity, preservedSpoilageMultiplier } = calculateStorageCapacity(buildings);
+  const { preservedFoodCapacity, preservedSpoilageMultiplier } = calculateStorageCapacity(
+    buildings,
+    inventory,
+  );
 
   for (let day = 0; day < wholeDays; day += 1) {
     let remainingPreservedBulk = preservedFoodCapacity;
@@ -613,13 +628,14 @@ export function advanceStarvationState({
 }
 
 /**
- * Calculates total village water bowl storage across all active buildings
- * (Main provides 10 / 25 / 50 bowls across Lv 1 / 2 / 3 via `waterCapacityByLevel`).
+ * Calculates total village water bowl storage across all active buildings and crafted Clay Vessels
+ * (Main provides 10 / 25 / 50 bowls across Lv 1 / 2 / 3 via `waterCapacityByLevel`; each `clay_vessel` adds +10).
  *
  * @param {Array<{ buildingId: string, level?: number, status?: string }>} buildings - Placed buildings.
+ * @param {Record<string, number> | Map<string, number>} [inventory={}] - Optional inventory map for Clay Vessel bonuses.
  * @returns {number} Total water bowl storage capacity.
  */
-export function calculateWaterCapacity(buildings) {
+export function calculateWaterCapacity(buildings, inventory = {}) {
   let total = 0;
 
   for (const instance of buildings ?? []) {
@@ -640,7 +656,31 @@ export function calculateWaterCapacity(buildings) {
     }
   }
 
+  const vesselQty =
+    inventory instanceof Map ? (inventory.get('clay_vessel') ?? 0) : (inventory?.clay_vessel ?? 0);
+  total += Math.max(0, Math.floor(vesselQty)) * 10;
+
   return total;
+}
+
+/**
+ * Resolves unit training resource cost dynamically (`gatherer`/`builder` remain free to avoid
+ * soft-locks; `hunter` adds `1 Small Stone` once `stone_tools` is unlocked).
+ *
+ * @param {string} unitId
+ * @param {string[] | Set<string>} [unlockedTechs=[]]
+ * @returns {Record<string, number>} Resource requirements keyed by resourceId.
+ */
+export function getUnitTrainingCost(unitId, unlockedTechs = []) {
+  const def = UNITS[unitId];
+  if (!def) return {};
+  if (unitId === 'hunter') {
+    const unlocked = unlockedTechs instanceof Set ? unlockedTechs : new Set(unlockedTechs);
+    return unlocked.has('stone_tools')
+      ? { sticks: 1, small_stones: 1 }
+      : { sticks: 1 };
+  }
+  return def.trainingCost ?? {};
 }
 
 /**
@@ -1456,6 +1496,71 @@ export function rollTileActionYield({
 }
 
 /**
+ * Deterministically resolves wild Wolf (10%) or Bear (4%) encounters in forests.
+ * Unescorted Gatherers risk 1 death; Hunters slay the predator for bonus Meat, Bones & Pelts.
+ *
+ * @param {object} params
+ * @param {{ gatherer?: number, hunter?: number }} [params.units={}]
+ * @param {string[] | Set<string>} [params.unlockedTechs=[]]
+ * @param {() => number} params.rng - Seeded PRNG function.
+ * @returns {{
+ *   predator: 'wolf' | 'bear' | null,
+ *   killedPredator: boolean,
+ *   casualties: { gatherer: number, hunter: number },
+ *   bonusLoot: Record<string, number>,
+ * }} Predator encounter resolution.
+ */
+export function rollForestPredatorEncounter({ units = {}, unlockedTechs = [], rng }) {
+  if (typeof rng !== 'function') {
+    return {
+      predator: null,
+      killedPredator: false,
+      casualties: { gatherer: 0, hunter: 0 },
+      bonusLoot: {},
+    };
+  }
+
+  const gatherers = Math.max(0, Math.floor(units.gatherer ?? 0));
+  const hunters = Math.max(0, Math.floor(units.hunter ?? 0));
+  const roll = rng();
+  const predator = roll < 0.04 ? 'bear' : roll < 0.14 ? 'wolf' : null;
+  if (!predator) {
+    return {
+      predator: null,
+      killedPredator: false,
+      casualties: { gatherer: 0, hunter: 0 },
+      bonusLoot: {},
+    };
+  }
+
+  if (hunters === 0) {
+    const deathChance = predator === 'bear' ? 0.7 : 0.35;
+    const gDead = gatherers > 0 && rng() < deathChance ? 1 : 0;
+    return {
+      predator,
+      killedPredator: false,
+      casualties: { gatherer: gDead, hunter: 0 },
+      bonusLoot: {},
+    };
+  }
+
+  const unlocked = unlockedTechs instanceof Set ? unlockedTechs : new Set(unlockedTechs);
+  const hDead =
+    predator === 'bear' && hunters === 1 && !unlocked.has('copper_spear') && rng() < 0.2 ? 1 : 0;
+  const bonusLoot =
+    predator === 'bear'
+      ? { meat: 5, bones: 4, pelts: 3 }
+      : { meat: 2, bones: 2, pelts: 1 };
+
+  return {
+    predator,
+    killedPredator: true,
+    casualties: { gatherer: 0, hunter: hDead },
+    bonusLoot,
+  };
+}
+
+/**
  * Resolves combined yields for a dispatched unit team (`{ gatherer, hunter, water }`).
  * - `'team'`: Smart Role Assignment — Gatherers roll `'gather'`, Hunters roll `'hunt'`, and Water collectors gather `10` bowls each.
  * - `'collect_water'`: All Gatherers and Hunters collect `1` jar (`10` bowls) each on water tiles.
@@ -1475,7 +1580,8 @@ export function rollTileActionYield({
  *   waterBowls: number,
  *   rollsExecuted: number,
  *   emptyRolls: number,
- * }} Aggregated team yields.
+ *   encounter: object | null,
+ * }} Aggregated team yields and optional predator outcome.
  */
 export function resolveTeamActionYield({
   units = {},
@@ -1507,6 +1613,7 @@ export function resolveTeamActionYield({
       waterBowls: totalCollectors * bowlsPerJar,
       rollsExecuted: totalCollectors,
       emptyRolls: 0,
+      encounter: null,
     };
   }
 
@@ -1537,6 +1644,15 @@ export function resolveTeamActionYield({
     }
   };
 
+  let encounter = null;
+  const applyForestEncounter = (teamUnits) => {
+    if (terrain !== 'forest' || typeof rng !== 'function') return;
+    encounter = rollForestPredatorEncounter({ units: teamUnits, unlockedTechs, rng });
+    for (const [id, qty] of Object.entries(encounter.bonusLoot ?? {})) {
+      items[id] = (items[id] ?? 0) + qty;
+    }
+  };
+
   if (action === 'team') {
     if (gatherers + hunters + waterCollectors < 1) {
       throw new Error('Team action requires at least 1 assigned unit.');
@@ -1550,7 +1666,8 @@ export function resolveTeamActionYield({
       waterBowls = waterCollectors * bowlsPerJar;
       rollsExecuted += waterCollectors;
     }
-    return { terrain, items, waterBowls, rollsExecuted, emptyRolls };
+    applyForestEncounter({ gatherer: gatherers, hunter: hunters });
+    return { terrain, items, waterBowls, rollsExecuted, emptyRolls, encounter };
   }
 
   const actingUnitId = action === 'gather' ? 'gatherer' : action === 'hunt' ? 'hunter' : null;
@@ -1564,6 +1681,10 @@ export function resolveTeamActionYield({
   }
 
   runRolls(actingUnitId, action, actingCount);
+  applyForestEncounter({
+    gatherer: actingUnitId === 'gatherer' ? actingCount : 0,
+    hunter: actingUnitId === 'hunter' ? actingCount : 0,
+  });
 
   return {
     terrain,
@@ -1571,6 +1692,7 @@ export function resolveTeamActionYield({
     waterBowls,
     rollsExecuted,
     emptyRolls,
+    encounter,
   };
 }
 
@@ -1705,27 +1827,35 @@ export function unlockContinentRingIfTerritoryComplete({
 /**
  * Selects a deterministic starter village coordinate on the Continent inside the
  * central North-South band (30%..70% height) across the full West-East range.
- * Guarantees the chosen tile is buildable and never overlaps The Obelisk.
+ * Guarantees the chosen tile is buildable, skips `excludedCoords`, and never overlaps The Obelisk.
  *
  * @param {{ size: number, tiles: Array<object>, obeliskCoords?: { x: number, y: number } }} continent
  * @param {string | number} [seed='obelisk-alpha'] - World seed used for deterministic tie-breaking.
+ * @param {Array<{ x: number, y: number }>} [excludedCoords=[]] - Previously abandoned village coords to skip.
  * @returns {object} Selected starter Continent tile.
  * @throws {Error} When no buildable non-Obelisk tile exists on the Continent.
  */
-export function pickStarterSpawnTile(continent, seed = 'obelisk-alpha') {
+export function pickStarterSpawnTile(continent, seed = 'obelisk-alpha', excludedCoords = []) {
   const { size, tiles, obeliskCoords } = continent;
   const minY = Math.floor(size * 0.3);
   const maxY = Math.max(minY, Math.ceil(size * 0.7) - 1);
+  const excludedSet = new Set((excludedCoords ?? []).map((c) => `${c.x},${c.y}`));
 
-  const isEligible = (tile) =>
+  const isEligible = (tile, ignoreExcluded = false) =>
     Boolean(tile?.buildable) &&
     !tile.isObelisk &&
-    !(obeliskCoords && tile.x === obeliskCoords.x && tile.y === obeliskCoords.y);
+    !(obeliskCoords && tile.x === obeliskCoords.x && tile.y === obeliskCoords.y) &&
+    (ignoreExcluded || !excludedSet.has(`${tile.x},${tile.y}`));
 
   const bandCandidates = tiles.filter(
     (tile) => isEligible(tile) && tile.y >= minY && tile.y <= maxY,
   );
-  const pool = bandCandidates.length > 0 ? bandCandidates : tiles.filter(isEligible);
+  const pool =
+    bandCandidates.length > 0
+      ? bandCandidates
+      : tiles.filter((t) => isEligible(t)).length > 0
+        ? tiles.filter((t) => isEligible(t))
+        : tiles.filter((t) => isEligible(t, true));
 
   if (pool.length === 0) {
     throw new Error('No buildable non-Obelisk Continent tile available for starter spawn.');

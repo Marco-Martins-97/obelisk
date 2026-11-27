@@ -115,18 +115,19 @@ export function createLivestock(config) {
     dailyFeedQty: config.dailyFeedQty ?? 1,
     dailyWaterBowls: config.dailyWaterBowls ?? 1,
     captureWeight: config.captureWeight ?? 20,
+    slaughterYield: Object.freeze({ ...(config.slaughterYield ?? { meat: 2, bones: 1 }) }),
     description: config.description ?? '',
   });
 }
 
-/** Registered seasonal crops across TFC soil nutrients A, B, and C. */
+/** Registered seasonal crops across soil nutrients N (Nitrogen), P (Phosphorus), and K (Potassium). */
 export const CROPS = Object.freeze({
   grain: createCrop({
     id: 'grain',
     name: 'Wheat / Grain',
     seedItemId: 'grain',
     harvestItemId: 'grain',
-    nutrientType: 'A',
+    nutrientType: 'N',
     nutrientCost: 30,
     growthDays: 60,
     harvestWindowDays: 30,
@@ -134,14 +135,14 @@ export const CROPS = Object.freeze({
     maxTempC: 32,
     yieldMin: 3,
     yieldMax: 10,
-    description: 'Staple grain seeded in Spring (Nutrient A); yields 3..10 per surviving slot.',
+    description: 'Staple grain seeded in Spring (Nutrient N - Nitrogen); yields 3..10 per surviving slot.',
   }),
   flax: createCrop({
     id: 'flax',
     name: 'Wild Flax / Hemp',
     seedItemId: 'roots',
     harvestItemId: 'straw',
-    nutrientType: 'B',
+    nutrientType: 'K',
     nutrientCost: 25,
     growthDays: 60,
     harvestWindowDays: 30,
@@ -149,14 +150,14 @@ export const CROPS = Object.freeze({
     maxTempC: 28,
     yieldMin: 3,
     yieldMax: 10,
-    description: 'Fibrous crop cultivated using Wild Roots stalks (Nutrient B); harvests Straw and fibers.',
+    description: 'Fibrous crop cultivated using Wild Roots stalks (Nutrient K - Potassium); harvests Straw and fibers.',
   }),
   vegetables: createCrop({
     id: 'vegetables',
     name: 'Root Vegetables',
     seedItemId: 'roots',
     harvestItemId: 'vegetables',
-    nutrientType: 'C',
+    nutrientType: 'P',
     nutrientCost: 25,
     growthDays: 60,
     harvestWindowDays: 30,
@@ -164,7 +165,7 @@ export const CROPS = Object.freeze({
     maxTempC: 26,
     yieldMin: 3,
     yieldMax: 8,
-    description: 'Hardy cold-tolerant vegetables propagated from Wild Roots (Nutrient C) for edible rations.',
+    description: 'Hardy cold-tolerant vegetables propagated from Wild Roots (Nutrient P - Phosphorus).',
   }),
 });
 
@@ -192,6 +193,7 @@ export const LIVESTOCK = Object.freeze({
     dailyOutputId: null,
     dailyOutputQty: 0,
     captureWeight: 18,
+    slaughterYield: { meat: 4, bones: 3, pelts: 2 },
     description: 'Mount required to train Scouts (1 Horse + 1 Pop); produces 1 Manure/day.',
   }),
   donkey: createLivestock({
@@ -200,6 +202,7 @@ export const LIVESTOCK = Object.freeze({
     dailyOutputId: null,
     dailyOutputQty: 0,
     captureWeight: 18,
+    slaughterYield: { meat: 4, bones: 3, pelts: 2 },
     description: 'Pack animal required to craft Caravans (1 Donkey + 1 Pop); produces 1 Manure/day.',
   }),
   goat: createLivestock({
@@ -208,6 +211,7 @@ export const LIVESTOCK = Object.freeze({
     dailyOutputId: 'milk',
     dailyOutputQty: 1,
     captureWeight: 22,
+    slaughterYield: { meat: 3, bones: 2, pelts: 1 },
     description: 'Produces 1 Milk and 1 Manure per fed day.',
   }),
   sheep: createLivestock({
@@ -216,6 +220,7 @@ export const LIVESTOCK = Object.freeze({
     dailyOutputId: 'wool',
     dailyOutputQty: 1,
     captureWeight: 20,
+    slaughterYield: { meat: 3, bones: 2, pelts: 1 },
     description: 'Produces 1 Wool and 1 Manure per fed day.',
   }),
   chicken: createLivestock({
@@ -224,6 +229,7 @@ export const LIVESTOCK = Object.freeze({
     dailyOutputId: 'eggs',
     dailyOutputQty: 1,
     captureWeight: 22,
+    slaughterYield: { meat: 1, bones: 1 },
     description: 'Produces 1 Egg and 1 Manure per fed day.',
   }),
 });

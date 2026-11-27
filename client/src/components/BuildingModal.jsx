@@ -7,33 +7,27 @@ import {
   TECHNOLOGIES,
   UNITS,
   canBuildOrUpgradeBuilding,
+  calculateBuildingRepairCost,
+  calculateRepairAllCost,
+  canDemolishBuilding,
   getBuildingTierUpgradeRule,
   getBuildingUpgradePreview,
   getMainTierChangeRule,
+  getUnitTrainingCost,
+  groupBuildingRecipesByOutput,
   isTechTriggerSatisfied,
 } from '@obelisk/shared';
 import CopperAgeBuildingPanels from './CopperAgeBuildingPanels.jsx';
 import CostInline from './CostInline.jsx';
-import { formatGameDuration } from '../utils/timeFormat.js';
+import { formatRealDurationHMS, formatRealHoursHMS } from '../utils/timeFormat.js';
 
 /**
  * Native `<dialog>` building inspector and management modal.
- * Shows `"Building..."` + countdown timers while constructing, and unit training,
- * tech research (`FIREPIT`), crafting (`FIREPIT` / `KILN`), level upgrades, and `MAIN` Tier
- * Age controller actions once active.
+ * Supports active-while-upgrading controls, building condition & repair/repair-all,
+ * safe demolition, unit costs & dismissal, `[Research] -> [Craft]` tech transformation,
+ * bottom Researched Technologies dropdown, output-grouped single Craft buttons, and previews.
  *
  * @param {object} props
- * @param {object | null} props.building - Selected building instance (or null when closed).
- * @param {object} props.state - Full village state snapshot.
- * @param {number} props.maxPop
- * @param {number} props.popUsed
- * @param {{ gatherer: number, hunter: number, builder: number }} props.freeUnits
- * @param {() => void} props.onClose
- * @param {(unitId: string) => void} props.onTrainUnit
- * @param {(instanceId: string) => void} props.onUpgradeBuilding
- * @param {(targetTier: number) => void} props.onChangeMainTier
- * @param {(params: { buildingInstanceId: string, recipeId: string }) => void} props.onStartCraft
- * @param {(params: { buildingInstanceId: string, techId: string }) => void} props.onStartResearch
  * @returns {import('react').JSX.Element | null}
  */
 export default function BuildingModal({
@@ -46,15 +40,26 @@ export default function BuildingModal({
   freeUnits,
   onClose,
   onTrainUnit,
+  onDismissUnit,
   onUpgradeBuilding,
   onUpgradeBuildingTier,
   onChangeMainTier,
   onStartCraft,
   onStartResearch,
+  onRepairBuilding,
+  onRepairAllBuildings,
+  onDemolishBuilding,
 }) {
   const dialogRef = useRef(null);
   const titleId = useId();
   const [craftQuantities, setCraftQuantities] = useState({});
+  const [selectedVariants, setSelectedVariants] = useState({});
+  const [confirmDestroy, setConfirmDestroy] = useState(false);
+
+  const handleModalClose = () => {
+    setConfirmDestroy(false);
+    onClose();
+  };
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -74,7 +79,6 @@ export default function BuildingModal({
       }
     }
 
-    // Fallback for browsers without <dialog closedby="any"> outside-press dismissal.
     if (!building || 'closedBy' in HTMLDialogElement.prototype) return undefined;
 
     let pressedOutside = false;
@@ -86,7 +90,10 @@ export default function BuildingModal({
       pressedOutside = isOutside(e);
     };
     const onUp = (e) => {
-      if (pressedOutside && isOutside(e)) onClose();
+      if (pressedOutside && isOutside(e)) {
+        setConfirmDestroy(false);
+        onClose();
+      }
     };
     dialog.addEventListener('pointerdown', onDown);
     dialog.addEventListener('pointerup', onUp);
@@ -100,6 +107,13 @@ export default function BuildingModal({
   const isAbandoned = Boolean(state.isAbandoned);
   const main = state.buildings.find((b) => b.buildingId === 'main') ?? building;
   const ageLabel = building ? (AGES[(building.tier ?? 1) - 1] ?? 'stone') : 'stone';
+  const activeSpeed = village?.effectiveSpeedFactor ?? state.speedFactor ?? 6;
+  const effPenalty = state.efficiencyPenalty ?? 0;
+  const dismissUnitFn = onDismissUnit ?? village?.dismissUnit;
+  const repairFn = onRepairBuilding ?? village?.repairBuilding;
+  const repairAllFn = onRepairAllBuildings ?? village?.repairAllBuildings;
+  const demolishFn = onDemolishBuilding ?? village?.demolishBuilding;
+
   const activeBuildTask = building
     ? state.tasks.find(
         (t) =>
@@ -164,13 +178,55 @@ export default function BuildingModal({
 
   const isUpgrading = Boolean(activeBuildTask) && building?.status === 'active';
   const upgradePreview = building ? getBuildingUpgradePreview({ building }) : null;
+  const conditionPct = Math.round(building?.condition ?? 100);
+  const graceDays = building?.graceDaysRemaining ?? 0;
+  const repairCost = building ? calculateBuildingRepairCost(building) : {};
+  const canRepair =
+    !isAbandoned &&
+    Object.keys(repairCost).length > 0 &&
+    Object.entries(repairCost).every(([id, q]) => (state.inventory[id] ?? 0) >= q);
+
+  const repairAllCost =
+    building?.buildingId === 'main' ? calculateRepairAllCost(state.buildings) : {};
+  const hasAnyDamaged = Object.keys(repairAllCost).length > 0;
+  const canRepairAll =
+    !isAbandoned &&
+    hasAnyDamaged &&
+    Object.entries(repairAllCost).every(([id, q]) => (state.inventory[id] ?? 0) >= q);
+
+  const demolishCheck =
+    building && building.buildingId !== 'main'
+      ? canDemolishBuilding({
+          building,
+          buildings: state.buildings,
+          units: state.units ?? {},
+          starvationPopLoss: state.starvationPopLoss ?? 0,
+        })
+      : null;
+
+  const pendingTechs = def
+    ? def.researchesTechs.filter((id) => !state.unlockedTechs.includes(id))
+    : [];
+  const researchedTechs = def
+    ? def.researchesTechs.filter(
+        (id) => state.unlockedTechs.includes(id) && !TECHNOLOGIES[id]?.unlocksRecipe,
+      )
+    : [];
+  const recipeGroups = def
+    ? groupBuildingRecipesByOutput({
+        recipeIds: def.craftsRecipes,
+        unlockedTechs: state.unlockedTechs,
+        inventory: state.inventory,
+        water: state.water ?? 0,
+      })
+    : [];
 
   return (
     <dialog
       ref={dialogRef}
       closedby="any"
       aria-labelledby={titleId}
-      onClose={onClose}
+      onClose={handleModalClose}
       className="m-auto w-full max-w-lg rounded-xl border border-slate-700 bg-slate-900 p-5 text-slate-100 shadow-2xl backdrop:bg-slate-950/75"
     >
       {building && def ? (
@@ -182,13 +238,25 @@ export default function BuildingModal({
               </h2>
               <p className="text-xs text-slate-400">
                 Tier {building.tier} (<span className="capitalize">{ageLabel} Age</span>) · Level{' '}
-                {building.level}/{def.maxLevel}
+                {building.level}/{def.maxLevel} ·{' '}
+                <span
+                  className={
+                    conditionPct >= 60
+                      ? 'text-emerald-300'
+                      : conditionPct >= 25
+                        ? 'text-amber-300'
+                        : 'text-rose-400'
+                  }
+                >
+                  Condition: {conditionPct}%
+                </span>
+                {graceDays > 0 ? ` (${graceDays}d buffer)` : ''}
               </p>
             </div>
 
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleModalClose}
               className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 hover:text-white"
             >
               Close
@@ -220,12 +288,15 @@ export default function BuildingModal({
               <div className="font-bold text-amber-300">Building...</div>
               <div className="mt-1 font-mono text-slate-200">
                 Completion in:{' '}
-                {formatGameDuration((building.completedAtMs ?? state.virtualTimeMs) - state.virtualTimeMs)}
+                {formatRealDurationHMS(
+                  (building.completedAtMs ?? state.virtualTimeMs) - state.virtualTimeMs,
+                  activeSpeed,
+                )}
               </div>
               {activeBuildTask?.returnsAtMs && (
                 <div className="mt-0.5 font-mono text-slate-400">
                   Builder returns to Main in:{' '}
-                  {formatGameDuration(activeBuildTask.returnsAtMs - state.virtualTimeMs)}
+                  {formatRealDurationHMS(activeBuildTask.returnsAtMs - state.virtualTimeMs, activeSpeed)}
                 </div>
               )}
             </div>
@@ -241,19 +312,74 @@ export default function BuildingModal({
                   </div>
                   <div className="mt-1 font-mono text-slate-200">
                     Completion in:{' '}
-                    {formatGameDuration(
+                    {formatRealDurationHMS(
                       (activeBuildTask.completedAtMs ?? state.virtualTimeMs) - state.virtualTimeMs,
+                      activeSpeed,
                     )}
                   </div>
                   {activeBuildTask.returnsAtMs &&
                     activeBuildTask.returnsAtMs !== activeBuildTask.completedAtMs && (
                       <div className="mt-0.5 font-mono text-slate-400">
                         Builder returns to Main in:{' '}
-                        {formatGameDuration(activeBuildTask.returnsAtMs - state.virtualTimeMs)}
+                        {formatRealDurationHMS(activeBuildTask.returnsAtMs - state.virtualTimeMs, activeSpeed)}
                       </div>
                     )}
                 </div>
               )}
+
+              {/* Building Repair / Repair All */}
+              {(Object.keys(repairCost).length > 0 || hasAnyDamaged) && (
+                <section className="space-y-2 rounded-lg border border-amber-700/50 bg-slate-950/80 p-3">
+                  {Object.keys(repairCost).length > 0 && repairFn && (
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-amber-200">
+                          Repair Building ({conditionPct}% → 100%)
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Cost: <CostInline cost={repairCost} inventory={state.inventory} />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!canRepair}
+                        onClick={() => repairFn(building.instanceId)}
+                        className={`rounded px-2.5 py-1 font-semibold ${
+                          canRepair
+                            ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                            : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                        }`}
+                      >
+                        Repair
+                      </button>
+                    </div>
+                  )}
+
+                  {building.buildingId === 'main' && hasAnyDamaged && repairAllFn && (
+                    <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-2">
+                      <div>
+                        <div className="font-semibold text-sky-200">Repair All Buildings</div>
+                        <div className="text-[11px] text-slate-400">
+                          Total Cost: <CostInline cost={repairAllCost} inventory={state.inventory} />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!canRepairAll}
+                        onClick={() => repairAllFn()}
+                        className={`rounded px-2.5 py-1 font-semibold ${
+                          canRepairAll
+                            ? 'bg-sky-500 text-slate-950 hover:bg-sky-400'
+                            : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                        }`}
+                      >
+                        Repair All
+                      </button>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {/* MAIN Unit Training */}
               {def.trainsUnits.length > 0 && (
                 <section className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
@@ -269,6 +395,10 @@ export default function BuildingModal({
                       .filter((unitId) => (main?.tier ?? 1) >= (UNITS[unitId]?.tier ?? 1))
                       .map((unitId) => {
                         const u = UNITS[unitId];
+                        const unitCost = getUnitTrainingCost(unitId, state.unlockedTechs);
+                        const canAffordUnit = Object.entries(unitCost).every(
+                          ([id, q]) => (state.inventory[id] ?? 0) >= q,
+                        );
                         const missingAnimals = Object.entries(u.requiredAnimal ?? {}).filter(
                           ([animalId, q]) => (state.animals?.[animalId] ?? 0) < q,
                         );
@@ -276,7 +406,11 @@ export default function BuildingModal({
                         const prosOk =
                           unitId !== 'prospector' || state.unlockedTechs.includes('bone_pickaxe');
                         const canTrain =
-                          !isAbandoned && prosOk && hasAnimals && popUsed + u.popCost <= maxPop;
+                          !isAbandoned &&
+                          prosOk &&
+                          hasAnimals &&
+                          canAffordUnit &&
+                          popUsed + u.popCost <= maxPop;
                         return (
                           <div
                             key={unitId}
@@ -288,6 +422,12 @@ export default function BuildingModal({
                               </div>
                               <div className="text-[11px] text-slate-400">
                                 Pop: {u.popCost}
+                                {Object.keys(unitCost).length > 0 && (
+                                  <>
+                                    {' · Cost: '}
+                                    <CostInline cost={unitCost} inventory={state.inventory} />
+                                  </>
+                                )}
                                 {Object.keys(u.requiredAnimal ?? {}).length > 0 && (
                                   <>
                                     {' · '}
@@ -300,7 +440,7 @@ export default function BuildingModal({
                                     >
                                       Needs:{' '}
                                       {Object.entries(u.requiredAnimal)
-                                        .map(([a, q]) => `${q} ${a}`)
+                                        .map(([a, q]) => `${state.animals?.[a] ?? 0}/${q} ${a}`)
                                         .join(', ')}
                                     </span>
                                   </>
@@ -315,18 +455,35 @@ export default function BuildingModal({
                                 )}
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              disabled={!canTrain}
-                              onClick={() => onTrainUnit(unitId)}
-                              className={`rounded px-2.5 py-1 font-semibold transition ${
-                                canTrain
-                                  ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                                  : 'cursor-not-allowed bg-slate-800 text-slate-500'
-                              }`}
-                            >
-                              Train +1
-                            </button>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {dismissUnitFn && (
+                                <button
+                                  type="button"
+                                  aria-label={`Dispense 1 ${u.name}`}
+                                  disabled={isAbandoned || (freeUnits[unitId] ?? 0) < 1}
+                                  onClick={() => dismissUnitFn(unitId)}
+                                  className={`rounded border px-2 py-1 font-semibold transition ${
+                                    !isAbandoned && (freeUnits[unitId] ?? 0) >= 1
+                                      ? 'border-rose-700/70 bg-rose-950/60 text-rose-200 hover:bg-rose-900/70'
+                                      : 'cursor-not-allowed border-slate-800 bg-slate-900 text-slate-600'
+                                  }`}
+                                >
+                                  Dispense -1
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={!canTrain}
+                                onClick={() => onTrainUnit(unitId)}
+                                className={`rounded px-2.5 py-1 font-semibold transition ${
+                                  canTrain
+                                    ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                    : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                                }`}
+                              >
+                                Train +1
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -334,14 +491,13 @@ export default function BuildingModal({
                 </section>
               )}
 
-              {/* FIREPIT Research Technologies */}
-              {def.researchesTechs.length > 0 && (
+              {/* Pending Technology Research (unlocked recipe techs transform into Craft rows below) */}
+              {pendingTechs.length > 0 && (
                 <section className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                   <h3 className="mb-2 font-semibold text-slate-100">Technology Research</h3>
                   <div className="space-y-2">
-                    {def.researchesTechs.map((techId) => {
+                    {pendingTechs.map((techId) => {
                       const tech = TECHNOLOGIES[techId];
-                      const isUnlocked = state.unlockedTechs.includes(techId);
                       const isResearching = activeCraftOrResearch.some((t) => t.techId === techId);
                       const prereqsOk = tech.prerequisites.every((p) =>
                         state.unlockedTechs.includes(p),
@@ -362,17 +518,20 @@ export default function BuildingModal({
                           className="flex items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
                         >
                           <div>
-                            <div className="font-medium text-amber-200">{tech.name}</div>
+                            <div className="font-medium text-amber-200">
+                              {tech.name}
+                              {tech.unlocksRecipe && (
+                                <span className="ml-2 rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300">
+                                  → Craft
+                                </span>
+                              )}
+                            </div>
                             <div className="mt-0.5 text-[11px] text-slate-300">
                               Cost: <CostInline cost={tech.cost} inventory={state.inventory} /> ·{' '}
-                              {tech.researchTimeHours}h
+                              {formatRealHoursHMS(tech.researchTimeHours, activeSpeed, effPenalty)}
                             </div>
                           </div>
-                          {isUnlocked ? (
-                            <span className="rounded bg-emerald-500/20 px-2 py-1 font-semibold text-emerald-300">
-                              Unlocked
-                            </span>
-                          ) : isResearching ? (
+                          {isResearching ? (
                             <span className="rounded bg-amber-500/20 px-2 py-1 font-mono text-amber-300">
                               Researching...
                             </span>
@@ -399,15 +558,20 @@ export default function BuildingModal({
                 </section>
               )}
 
-              {/* Crafting Recipes */}
-              {def.craftsRecipes.length > 0 && (
+              {/* Grouped Crafting Recipes (1 Craft button per product item) */}
+              {recipeGroups.length > 0 && (
                 <section className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                   <h3 className="mb-2 font-semibold text-slate-100">Crafting</h3>
                   <div className="space-y-2">
-                    {def.craftsRecipes.map((recipeId) => {
-                      const recipe = RECIPES[recipeId];
-                      const waterCost = recipe.waterCostBowls ?? 0;
-                      const inputLimits = Object.entries(recipe.inputs).map(([id, q]) =>
+                    {recipeGroups.map((group) => {
+                      const manualVariantId = selectedVariants[group.primaryOutputId];
+                      const chosenRecipe =
+                        group.recipes.find((r) => r.id === manualVariantId) ?? group.activeRecipe;
+                      const displayLabel =
+                        group.recipes.length === 1 ? chosenRecipe.name : group.outputName;
+
+                      const waterCost = chosenRecipe.waterCostBowls ?? 0;
+                      const inputLimits = Object.entries(chosenRecipe.inputs).map(([id, q]) =>
                         q > 0 ? Math.floor((state.inventory[id] ?? 0) / q) : 999,
                       );
                       const waterLimit =
@@ -416,7 +580,7 @@ export default function BuildingModal({
                         0,
                         Math.min(999, ...inputLimits, waterLimit),
                       );
-                      const rawQty = craftQuantities[recipeId] ?? 1;
+                      const rawQty = craftQuantities[group.primaryOutputId] ?? 1;
                       const selectedQty =
                         maxCraftable > 0
                           ? Math.max(1, Math.min(maxCraftable, Math.floor(rawQty) || 1))
@@ -424,23 +588,49 @@ export default function BuildingModal({
                       const canCraft = !isAbandoned && maxCraftable >= 1;
 
                       const scaledInputs = Object.fromEntries(
-                        Object.entries(recipe.inputs).map(([id, q]) => [id, q * selectedQty]),
+                        Object.entries(chosenRecipe.inputs).map(([id, q]) => [id, q * selectedQty]),
                       );
                       const scaledWater = waterCost * selectedQty;
 
                       return (
                         <div
-                          key={recipeId}
+                          key={group.primaryOutputId}
                           className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="font-medium text-slate-100">
-                              {recipe.name}
-                              {recipe.unlocksTech && (
-                                <span className="ml-2 rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] capitalize text-orange-300">
-                                  Unlocks {recipe.unlocksAge ?? recipe.unlocksTech} Age
+                            <div className="flex flex-wrap items-center gap-1.5 font-medium text-slate-100">
+                              <span>{displayLabel}</span>
+                              {chosenRecipe.unlocksTech && (
+                                <span className="rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] capitalize text-orange-300">
+                                  Unlocks {chosenRecipe.unlocksAge ?? chosenRecipe.unlocksTech} Age
                                 </span>
                               )}
+                              {group.recipes.length > 1 &&
+                                group.recipes.map((variant) => {
+                                  const viaLabel = Object.keys(variant.inputs)[0]?.includes('_ore')
+                                    ? 'Ore'
+                                    : 'Nuggets';
+                                  const isCurrent = variant.id === chosenRecipe.id;
+                                  return (
+                                    <button
+                                      key={variant.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedVariants((prev) => ({
+                                          ...prev,
+                                          [group.primaryOutputId]: variant.id,
+                                        }))
+                                      }
+                                      className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                        isCurrent
+                                          ? 'border-sky-500/70 bg-sky-500/20 text-sky-200'
+                                          : 'border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200'
+                                      }`}
+                                    >
+                                      via {viaLabel}
+                                    </button>
+                                  );
+                                })}
                             </div>
                             <div className="text-[11px] text-slate-400">
                               <CostInline
@@ -450,22 +640,22 @@ export default function BuildingModal({
                                 currentWater={state.water ?? 0}
                               />{' '}
                               →{' '}
-                              {Object.entries(recipe.outputs)
+                              {Object.entries(chosenRecipe.outputs)
                                 .map(([id, q]) => `${q * selectedQty} ${RESOURCES[id]?.name ?? id}`)
                                 .join(', ')}{' '}
-                              ({Math.round(recipe.craftTimeHours * selectedQty * 100) / 100}h)
+                              ({formatRealHoursHMS(chosenRecipe.craftTimeHours * selectedQty, activeSpeed, effPenalty)})
                             </div>
                           </div>
 
                           <div className="flex items-center gap-1 font-mono text-[11px]">
                             <button
                               type="button"
-                              aria-label={`Decrease quantity for ${recipe.name}`}
+                              aria-label={`Decrease quantity for ${displayLabel}`}
                               disabled={isAbandoned || selectedQty <= 1}
                               onClick={() =>
                                 setCraftQuantities((prev) => ({
                                   ...prev,
-                                  [recipeId]: Math.max(1, selectedQty - 1),
+                                  [group.primaryOutputId]: Math.max(1, selectedQty - 1),
                                 }))
                               }
                               className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
@@ -477,24 +667,30 @@ export default function BuildingModal({
                               min={1}
                               max={Math.max(1, maxCraftable)}
                               disabled={isAbandoned || maxCraftable <= 0}
-                              aria-label={`Quantity for ${recipe.name}`}
+                              aria-label={`Quantity for ${displayLabel}`}
                               value={selectedQty}
                               onChange={(e) =>
                                 setCraftQuantities((prev) => ({
                                   ...prev,
-                                  [recipeId]: Math.max(1, Math.floor(Number(e.target.value) || 1)),
+                                  [group.primaryOutputId]: Math.max(
+                                    1,
+                                    Math.floor(Number(e.target.value) || 1),
+                                  ),
                                 }))
                               }
                               className="w-12 rounded border border-slate-700 bg-slate-950 px-1 py-1 text-center text-slate-100 disabled:opacity-40"
                             />
                             <button
                               type="button"
-                              aria-label={`Increase quantity for ${recipe.name}`}
+                              aria-label={`Increase quantity for ${displayLabel}`}
                               disabled={isAbandoned || selectedQty >= maxCraftable}
                               onClick={() =>
                                 setCraftQuantities((prev) => ({
                                   ...prev,
-                                  [recipeId]: Math.min(Math.max(1, maxCraftable), selectedQty + 1),
+                                  [group.primaryOutputId]: Math.min(
+                                    Math.max(1, maxCraftable),
+                                    selectedQty + 1,
+                                  ),
                                 }))
                               }
                               className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
@@ -503,12 +699,12 @@ export default function BuildingModal({
                             </button>
                             <button
                               type="button"
-                              aria-label={`Max quantity for ${recipe.name}`}
+                              aria-label={`Max quantity for ${displayLabel}`}
                               disabled={!canCraft}
                               onClick={() =>
                                 setCraftQuantities((prev) => ({
                                   ...prev,
-                                  [recipeId]: Math.max(1, maxCraftable),
+                                  [group.primaryOutputId]: Math.max(1, maxCraftable),
                                 }))
                               }
                               className="rounded border border-amber-600/60 bg-amber-950/50 px-1.5 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-900/60 disabled:cursor-not-allowed disabled:opacity-40"
@@ -521,10 +717,13 @@ export default function BuildingModal({
                               onClick={() => {
                                 onStartCraft({
                                   buildingInstanceId: building.instanceId,
-                                  recipeId,
+                                  recipeId: chosenRecipe.id,
                                   quantity: selectedQty,
                                 });
-                                setCraftQuantities((prev) => ({ ...prev, [recipeId]: 1 }));
+                                setCraftQuantities((prev) => ({
+                                  ...prev,
+                                  [group.primaryOutputId]: 1,
+                                }));
                               }}
                               className={`ml-1 rounded px-2.5 py-1 font-sans font-semibold ${
                                 canCraft
@@ -553,7 +752,7 @@ export default function BuildingModal({
                           ? `${t.quantity > 1 ? `${t.quantity}x ` : ''}${RECIPES[t.recipeId].name}`
                           : TECHNOLOGIES[t.techId].name}
                       </span>
-                      <span>{formatGameDuration(t.completedAtMs - state.virtualTimeMs)}</span>
+                      <span>{formatRealDurationHMS(t.completedAtMs - state.virtualTimeMs, activeSpeed)}</span>
                     </div>
                   ))}
                 </section>
@@ -589,6 +788,9 @@ export default function BuildingModal({
                       ) : (
                         'Free Upgrade'
                       )}
+                      {tierResetRule.buildTimeHours > 0
+                        ? ` · ${formatRealHoursHMS(tierResetRule.buildTimeHours, activeSpeed, effPenalty)}`
+                        : ''}
                     </div>
                     {!tierResetRule.allowed && (
                       <div className="text-[11px] text-rose-400">{tierResetRule.reason}</div>
@@ -634,7 +836,12 @@ export default function BuildingModal({
                       </div>
                     )}
                     <div className="text-[11px] text-slate-400">
-                      Cost: <CostInline cost={levelUpgradeCost} inventory={state.inventory} />
+                      Cost: <CostInline cost={levelUpgradeCost} inventory={state.inventory} /> ·{' '}
+                      {formatRealHoursHMS(
+                        levelUpgradeRule.buildTimeHours ?? def.buildTimeHours,
+                        activeSpeed,
+                        effPenalty,
+                      )}
                     </div>
                     {!levelUpgradeRule.allowed && (
                       <div className="text-[11px] text-rose-400">{levelUpgradeRule.reason}</div>
@@ -685,7 +892,7 @@ export default function BuildingModal({
                           {Object.keys(tierUpRule.cost).length > 0 ? (
                             <>
                               Cost: <CostInline cost={tierUpRule.cost} inventory={state.inventory} />{' '}
-                              · {tierUpRule.buildTimeHours}h
+                              · {formatRealHoursHMS(tierUpRule.buildTimeHours, activeSpeed, effPenalty)}
                             </>
                           ) : (
                             tierUpRule.reason
@@ -736,6 +943,71 @@ export default function BuildingModal({
                         className="rounded border border-slate-700 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Downgrade (Free)
+                      </button>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* Researched Technologies Dropdown at Bottom */}
+              {researchedTechs.length > 0 && (
+                <details className="rounded-lg border border-slate-800 bg-slate-950/70 p-2.5 text-xs">
+                  <summary className="cursor-pointer font-semibold text-slate-300 hover:text-white">
+                    Researched Technologies ({researchedTechs.length})
+                  </summary>
+                  <ul className="mt-2 space-y-1">
+                    {researchedTechs.map((techId) => (
+                      <li
+                        key={techId}
+                        className="flex items-center justify-between rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px]"
+                      >
+                        <span className="font-medium text-emerald-300">
+                          {TECHNOLOGIES[techId]?.name ?? techId}
+                        </span>
+                        <span className="text-[10px] uppercase text-slate-400">Researched</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
+              {/* Destroy Building (Non-Main) */}
+              {building.buildingId !== 'main' && demolishFn && demolishCheck && (
+                <section className="flex items-center justify-between gap-2 rounded-lg border border-rose-900/60 bg-rose-950/20 p-3">
+                  <div>
+                    <div className="font-semibold text-rose-300">Destroy Building</div>
+                    {!demolishCheck.allowed && (
+                      <div className="text-[11px] text-rose-400">{demolishCheck.reason}</div>
+                    )}
+                  </div>
+                  {!confirmDestroy ? (
+                    <button
+                      type="button"
+                      disabled={isAbandoned || !demolishCheck.allowed}
+                      onClick={() => setConfirmDestroy(true)}
+                      className="rounded border border-rose-700/70 bg-rose-950/70 px-2.5 py-1 font-semibold text-rose-200 hover:bg-rose-900/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Destroy Building
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          demolishFn(building.instanceId);
+                          setConfirmDestroy(false);
+                          onClose();
+                        }}
+                        className="rounded bg-rose-600 px-2.5 py-1 font-semibold text-white hover:bg-rose-500"
+                      >
+                        Confirm Destroy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDestroy(false)}
+                        className="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800"
+                      >
+                        Cancel
                       </button>
                     </div>
                   )}

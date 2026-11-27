@@ -55,6 +55,22 @@ export function formatRealDurationHMS(virtualRemainingMs, speedFactor = 6) {
 }
 
 /**
+ * Converts a recipe, tech, or construction duration in in-game hours (at baseline 6x scale
+ * and active starvation efficiency penalty) into a real wall-clock `HH:MM:SS` duration string.
+ *
+ * @param {number} inGameHours - Duration specified in in-game hours.
+ * @param {number} [speedFactor=6] - Active simulation speed multiplier.
+ * @param {number} [efficiencyPenalty=0] - Village starvation efficiency penalty (0..0.8).
+ * @returns {string} Zero-padded real-time `HH:MM:SS` duration string.
+ */
+export function formatRealHoursHMS(inGameHours, speedFactor = 6, efficiencyPenalty = 0) {
+  // Keep parity with calculateBuildTimestamps / startCraftRecipe which floor efficiency at 0.2.
+  const effMult = Math.max(0.2, 1 - (Number(efficiencyPenalty) || 0));
+  const virtualMs = ((Number(inGameHours) || 0) / effMult) * REAL_MS_PER_INGAME_HOUR;
+  return formatRealDurationHMS(virtualMs, speedFactor);
+}
+
+/**
  * Formats the exact local wall-clock timestamp (`HH:MM:SS`) when a task will conclude.
  * Example: started at 10:00:00 needing 00:02:15 real time displays `10:02:15`.
  *

@@ -24,20 +24,24 @@ import {
   TERRITORY_TILE_DISTANCE_KM,
   UNITS,
   WATER_BOWLS_PER_JAR,
+  BUILDING_DEGRADATION_GRACE_DAYS,
   advanceContinuousProduction,
   advanceCropFieldsAndOrchards,
+  advanceDailyBuildingDegradation,
   advanceDailyLivestock,
   advanceStarvationState,
   applyDailySpoilage,
   buildProspectionReport,
   calculateAnimalPenCapacity,
   calculateBuildTimestamps,
+  calculateBuildingRepairCost,
   calculateContinentExpeditionPlan,
   calculateDailySurvival,
   calculateFarmMaxAttachments,
   calculateFarmSeedCapacity,
   calculateMaxPopulation,
   calculatePopUsed,
+  calculateRepairAllCost,
   calculateStorageCapacity,
   calculateStorageUsed,
   calculateTeamActionTimestamps,
@@ -47,6 +51,7 @@ import {
   calculateUnitActionTimestamps,
   calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
+  canDemolishBuilding,
   classifyOreDensitySample,
   classifyTerritoryTile,
   consumeStoredFoodFEFO,
@@ -71,8 +76,10 @@ import {
   getMainTierChangeRule,
   getStarvationStageInfo,
   getTaskPhase,
+  getUnitTrainingCost,
   getVillageDailyProductionSummary,
   getWallBonuses,
+  groupBuildingRecipesByOutput,
   isTechTriggerSatisfied,
   normalizedTempToCelsius,
   pickStarterSpawnTile,
@@ -83,7 +90,9 @@ import {
   resolveOrchardHarvest,
   resolveTeamActionYield,
   revealBox3x3,
+  rollForestPredatorEncounter,
   rollTileActionYield,
+  slaughterLivestock,
   trimUnitsBalanced,
   unlockContinentRingIfTerritoryComplete,
   validateBuildingPlacement,
@@ -987,8 +996,13 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
     expect(harvest.itemId).toBe('grain');
     expect(harvest.harvestedQty).toBeGreaterThanOrEqual(120);
 
-    const fertilized = fertilizeCropPlot(details['10,11'].cropPlot);
-    expect(fertilized.nutrients.A).toBeGreaterThan(details['10,11'].cropPlot.nutrients.A);
+    const afterN = fertilizeCropPlot(details['10,11'].cropPlot, 'manure');
+    expect(afterN.nutrients.N).toBeGreaterThan(details['10,11'].cropPlot.nutrients.N);
+    const afterP = fertilizeCropPlot({ ...createEmptyCropPlot(), nutrients: { N: 50, P: 50, K: 50 } }, 'bone_meal');
+    expect(afterP.nutrients.P).toBe(75);
+    const afterK = fertilizeCropPlot({ ...createEmptyCropPlot(), nutrients: { N: 50, P: 50, K: 50 } }, 'wood_ash');
+    expect(afterK.nutrients.K).toBe(75);
+    expect(RECIPES.smelt_copper_ingot.outputs.wood_ash).toBe(1);
 
     details = advanceCropFieldsAndOrchards({
       buildings,
@@ -1096,5 +1110,116 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
     expect(summary.find((s) => s.resourceId === 'water').ratePerDay).toBe(30);
     expect(summary.find((s) => s.resourceId === 'manure').ratePerDay).toBe(3);
     expect(summary.find((s) => s.resourceId === 'milk').ratePerDay).toBe(2);
+  });
+
+  it('scales Well output by territory + tile moisture, runs 3-day grace + Wall degradation, repairs, and safe demolish checks', () => {
+    const well = { instanceId: 'w1', buildingId: 'well', x: 1, y: 1, tier: 2, level: 1, status: 'active', condition: 100 };
+    const dryTerritory = {
+      size: 5,
+      tiles: Array.from({ length: 25 }, () => ({ isWater: false, buildable: true, moisture: 0.1 })),
+    };
+    const wetTerritory = {
+      size: 5,
+      tiles: Array.from({ length: 25 }, () => ({ isWater: false, buildable: true, moisture: 0.8 })),
+    };
+
+    const dryWell = getBuildingDailyProduction({
+      building: well,
+      tile: { isWater: false, buildable: true, moisture: 0.1 },
+      territory: dryTerritory,
+    });
+    const wetWell = getBuildingDailyProduction({
+      building: well,
+      tile: { isWater: false, buildable: true, moisture: 0.9 },
+      territory: wetTerritory,
+    });
+    expect(wetWell[0].ratePerDay).toBeGreaterThan(dryWell[0].ratePerDay);
+
+    // 3-day grace buffer preserves 100% condition; Day 4 decays 2% (reduced by Wall)
+    let buildings = [
+      { instanceId: 'm0', buildingId: 'main', tier: 2, level: 1, status: 'active', condition: 100, graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS },
+      { instanceId: 'h1', buildingId: 'house', tier: 2, level: 1, status: 'active', condition: 100, graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS },
+    ];
+    const duringGrace = advanceDailyBuildingDegradation({ buildings, elapsedDays: 3 });
+    expect(duringGrace.buildings[0].condition).toBe(100);
+    expect(duringGrace.abandonedByDegradation).toBe(false);
+
+    const day4NoWall = advanceDailyBuildingDegradation({ buildings: duringGrace.buildings, elapsedDays: 1 });
+    expect(day4NoWall.buildings[0].condition).toBe(98);
+
+    const day4WithWall = advanceDailyBuildingDegradation({
+      buildings: duringGrace.buildings,
+      wall: { tier: 2, level: 1 },
+      elapsedDays: 1,
+    });
+    expect(day4WithWall.buildings[0].condition).toBe(98.3);
+
+    const repairOne = calculateBuildingRepairCost(day4NoWall.buildings[0]);
+    const repairAll = calculateRepairAllCost(day4NoWall.buildings);
+    expect(Object.keys(repairOne).length).toBeGreaterThan(0);
+    expect(repairAll.sticks).toBeGreaterThanOrEqual(repairOne.sticks);
+
+    const crumbled = advanceDailyBuildingDegradation({
+      buildings: duringGrace.buildings,
+      elapsedDays: 45,
+    });
+    expect(crumbled.averageCondition).toBeLessThan(20);
+    expect(crumbled.abandonedByDegradation).toBe(true);
+
+    // Demolish guards: blocks main, blocks last house under pop load, allows excess empty house.
+    expect(canDemolishBuilding({ building: buildings[0], buildings, units: {} }).allowed).toBe(false);
+    expect(canDemolishBuilding({ building: buildings[1], buildings, units: { gatherer: 45 } }).allowed).toBe(false);
+    expect(canDemolishBuilding({ building: buildings[1], buildings, units: { gatherer: 5 } }).allowed).toBe(true);
+  });
+
+  it('handles animal slaughter, forest predator wolf/bear encounters, unit costs, grouped crafting & vessels/baskets', () => {
+    const butchered = slaughterLivestock({ animals: { goat: 2, horse: 1 }, animalId: 'goat', count: 1 });
+    expect(butchered.slaughtered).toBe(1);
+    expect(butchered.animals.goat).toBe(1);
+    expect(butchered.yields).toEqual({ meat: 3, bones: 2, pelts: 1 });
+
+    expect(getUnitTrainingCost('gatherer', [])).toEqual({});
+    expect(getUnitTrainingCost('builder', [])).toEqual({});
+    expect(getUnitTrainingCost('hunter', [])).toEqual({ sticks: 1 });
+    expect(getUnitTrainingCost('hunter', ['stone_tools'])).toEqual({ sticks: 1, small_stones: 1 });
+
+    // Unescorted gatherer encounters predator at <0.14 roll, while hunter slays it for bonus loot.
+    const predatorSeq = [0.02, 0.1]; // bear (<0.04) then gatherer casualty (<0.7)
+    let idx = 0;
+    const riskOutcome = rollForestPredatorEncounter({
+      units: { gatherer: 1, hunter: 0 },
+      rng: () => predatorSeq[idx++] ?? 0.5,
+    });
+    expect(riskOutcome.predator).toBe('bear');
+    expect(riskOutcome.casualties.gatherer).toBe(1);
+
+    const hunterSlay = rollForestPredatorEncounter({
+      units: { gatherer: 1, hunter: 2 },
+      rng: () => 0.02,
+    });
+    expect(hunterSlay.killedPredator).toBe(true);
+    expect(hunterSlay.bonusLoot).toEqual({ meat: 5, bones: 4, pelts: 3 });
+
+    // Woven Basket (+15 bulk) & Clay Vessel (+20 preserved food & +10 water bowls)
+    const storageCap = calculateStorageCapacity(
+      [{ buildingId: 'main', tier: 1, level: 1, status: 'active' }],
+      { woven_basket: 2, clay_vessel: 3 },
+    );
+    expect(storageCap.generalCapacity).toBe(280);
+    expect(storageCap.preservedFoodCapacity).toBe(60);
+    expect(calculateWaterCapacity([{ buildingId: 'main', tier: 1, level: 1, status: 'active' }], { clay_vessel: 3 })).toBe(40);
+
+    // Output-grouped recipes combine alternative smelting variants under 1 button & favor Ore variant when craftable.
+    expect(TECHNOLOGIES.basket_weaving.unlocksRecipe).toBe('craft_woven_basket');
+    expect(TECHNOLOGIES.copper_age.researchMode).toBe('passive');
+
+    const kilnGroups = groupBuildingRecipesByOutput({
+      recipeIds: BUILDINGS.kiln.craftsRecipes,
+      unlockedTechs: ['stone_tools', 'clay_vessels'],
+      inventory: { copper_ore: 10, copper_nugget: 20, charcoal: 5, clay: 4, sticks: 4 },
+    });
+    const copperGroup = kilnGroups.find((g) => g.primaryOutputId === 'copper_ingot');
+    expect(copperGroup.recipes).toHaveLength(2);
+    expect(copperGroup.activeRecipe.id).toBe('smelt_copper_ore');
   });
 });

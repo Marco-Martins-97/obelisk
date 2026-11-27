@@ -15,18 +15,23 @@ import {
   STARTER_VILLAGE_POOLS,
   TECHNOLOGIES,
   UNITS,
+  BUILDING_DEGRADATION_GRACE_DAYS,
+  FERTILIZER_TO_NUTRIENT,
   advanceContinuousProduction,
   advanceCropFieldsAndOrchards,
+  advanceDailyBuildingDegradation,
   advanceDailyLivestock,
   advanceStarvationState,
   applyDailySpoilage,
   calculateAnimalPenCapacity,
   calculateBuildTimestamps,
+  calculateBuildingRepairCost,
   calculateContinentExpeditionPlan,
   calculateFarmMaxAttachments,
   calculateFarmSeedCapacity,
   calculateMaxPopulation,
   calculatePopUsed,
+  calculateRepairAllCost,
   calculateStorageCapacity,
   calculateStorageUsed,
   calculateTeamActionTimestamps,
@@ -34,6 +39,7 @@ import {
   calculateUnitActionTimestamps,
   calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
+  canDemolishBuilding,
   consumeStoredFoodFEFO,
   createEmptyCropPlot,
   createEmptyOrchardPlot,
@@ -45,6 +51,7 @@ import {
   getCalendarState,
   getMainTierChangeRule,
   getStarvationStageInfo,
+  getUnitTrainingCost,
   getWallBonuses,
   hashCoords,
   initializeTileDeposit,
@@ -57,6 +64,7 @@ import {
   resolveTeamActionYield,
   revealBox3x3,
   rollWildAnimalCapture,
+  slaughterLivestock,
   trimUnitsBalanced,
   unlockContinentRingIfTerritoryComplete,
   validateBuildingPlacement,
@@ -163,6 +171,38 @@ function revealTerritoryBorderOnReturn({
 }
 
 /**
+ * Aggregates busy unit counts across all active village tasks.
+ *
+ * @param {Array<object>} tasks - Active task list.
+ * @returns {{ gatherer: number, hunter: number, builder: number, prospector: number, scout: number, caravan: number }} Busy counts by unitId.
+ */
+function calculateBusyUnits(tasks) {
+  const busy = { gatherer: 0, hunter: 0, builder: 0, prospector: 0, scout: 0, caravan: 0 };
+  for (const task of tasks ?? []) {
+    if (
+      task.kind === 'build' ||
+      task.kind === 'upgrade' ||
+      task.kind === 'upgrade_main' ||
+      task.kind === 'upgrade_tier' ||
+      task.kind === 'upgrade_wall'
+    ) {
+      busy.builder += task.buildersUsed ?? 1;
+    } else if (task.kind === 'prospect') {
+      busy.prospector += 1;
+    } else if (task.kind === 'unit_action' || task.kind === 'expedition') {
+      if (task.units) {
+        for (const [id, q] of Object.entries(task.units)) {
+          if (busy[id] !== undefined) busy[id] += q ?? 0;
+        }
+      } else if (busy[task.unitId] !== undefined) {
+        busy[task.unitId] += 1;
+      }
+    }
+  }
+  return busy;
+}
+
+/**
  * Builds the initial Stone Age village state for a world spawn and seed.
  *
  * @param {object} params
@@ -221,6 +261,8 @@ function createInitialState({ sessionKey, seed, spawnTile, continentSize, territ
         tier: STARTER_VILLAGE_POOLS.mainTier,
         level: STARTER_VILLAGE_POOLS.mainLevel,
         status: 'active',
+        condition: 100,
+        graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS,
         arrivesAtMs: null,
         completedAtMs: null,
       },
@@ -385,7 +427,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
       const recipe = RECIPES[task.recipeId];
       const craftOutputs = task.outputs ?? recipe.outputs;
       const craftQty = Math.max(1, Math.floor(task.quantity ?? 1));
-      const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
+      const maxStorage = calculateStorageCapacity(buildings, inventory).totalCapacity;
       const added = addItemsWithinCapacity(inventory, craftOutputs, maxStorage);
       inventory = added.inventory;
 
@@ -452,7 +494,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
         newLogs.push(`Scouts charted +${outcome.newlyRevealedCount} Continent tiles around (${task.toX}, ${task.toY}).`);
       }
       if (!outcome.intelOnly && Object.keys(outcome.itemsBroughtBack).length > 0) {
-        const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
+        const maxStorage = calculateStorageCapacity(buildings, inventory).totalCapacity;
         const added = addItemsWithinCapacity(inventory, outcome.itemsBroughtBack, maxStorage);
         inventory = added.inventory;
         const lootText = Object.entries(outcome.itemsBroughtBack)
@@ -503,18 +545,37 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
 
       const logParts = [];
       if (outcome.waterBowls > 0) {
-        const maxWater = calculateWaterCapacity(buildings);
+        const maxWater = calculateWaterCapacity(buildings, inventory);
         water = Math.min(maxWater, water + outcome.waterBowls);
         logParts.push(`+${outcome.waterBowls} water bowls (${water}/${maxWater})`);
       }
       if (Object.keys(outcome.items).length > 0) {
-        const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
+        const maxStorage = calculateStorageCapacity(buildings, inventory).totalCapacity;
         const added = addItemsWithinCapacity(inventory, outcome.items, maxStorage);
         inventory = added.inventory;
         const summary = Object.entries(outcome.items)
           .map(([id, q]) => `+${q} ${RESOURCES[id]?.name ?? id}`)
           .join(', ');
         logParts.push(`${summary}${added.dropped ? ' (storage capped)' : ''}`);
+      }
+
+      if (outcome.encounter?.predator) {
+        const predName = outcome.encounter.predator === 'bear' ? 'Bear' : 'Wolf';
+        if (outcome.encounter.killedPredator) {
+          newLogs.push(`Hunters slew a wild ${predName} in forest (${task.x}, ${task.y})!`);
+        } else {
+          newLogs.push(`Ambushed by a wild ${predName} in forest (${task.x}, ${task.y})!`);
+        }
+        const gLost = outcome.encounter.casualties?.gatherer ?? 0;
+        const hLost = outcome.encounter.casualties?.hunter ?? 0;
+        if (gLost > 0) {
+          units.gatherer = Math.max(0, (units.gatherer ?? 0) - gLost);
+          newLogs.push(`Lost ${gLost} Gatherer to the ${predName}!`);
+        }
+        if (hLost > 0) {
+          units.hunter = Math.max(0, (units.hunter ?? 0) - hLost);
+          newLogs.push(`Lost ${hLost} Hunter fighting the ${predName}!`);
+        }
       }
 
       // Forest Hunting can capture live livestock when Farmstead + Animal Pen has free space & Spear unlocked.
@@ -566,7 +627,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
       tileDetails,
       inventory,
       water,
-      waterCapacity: calculateWaterCapacity(buildings),
+      waterCapacity: calculateWaterCapacity(buildings, inventory),
       productionCarry,
       unlockedTechs,
       efficiencyPenalty,
@@ -601,7 +662,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
       inventory = livestockTick.inventory;
       water = livestockTick.water;
       if (Object.keys(livestockTick.produced).length > 0) {
-        const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
+        const maxStorage = calculateStorageCapacity(buildings, inventory).totalCapacity;
         inventory = addItemsWithinCapacity(inventory, livestockTick.produced, maxStorage).inventory;
       }
 
@@ -683,6 +744,21 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
         if (trimRes.trimmedTotal > 0) {
           newLogs.push(`Lost ${trimRes.trimmedTotal} villager(s) due to famine population decline.`);
         }
+      }
+
+      const degradeStep = advanceDailyBuildingDegradation({
+        buildings,
+        wall,
+        season: dayCal.season,
+        elapsedDays: 1,
+      });
+      buildings = degradeStep.buildings;
+      if (degradeStep.abandonedByDegradation && !isAbandoned) {
+        isAbandoned = true;
+        newLogs.push(
+          `Average building condition fell to ${degradeStep.averageCondition}% (< 20%) — village abandoned!`,
+        );
+        break;
       }
     }
 
@@ -775,6 +851,11 @@ function loadSavedOrFreshState(storageKey, worldParams) {
           tileDetails: parsed.tileDetails ?? {},
           productionCarry: parsed.productionCarry ?? {},
           discoveredContinentTiles: parsed.discoveredContinentTiles ?? {},
+          buildings: (parsed.buildings ?? []).map((b) => ({
+            condition: 100,
+            graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS,
+            ...b,
+          })),
           sessionKey: worldParams.sessionKey,
         };
       }
@@ -880,12 +961,12 @@ export function useStoneAgeVillage({
   const continentFogMask = useMemo(() => new Uint8Array(state.continentFog), [state.continentFog]);
 
   const mainBuilding = state.buildings.find((b) => b.buildingId === 'main') ?? state.buildings[0];
-  const storageProfile = calculateStorageCapacity(state.buildings);
+  const storageProfile = calculateStorageCapacity(state.buildings, state.inventory);
   const storageCapacity = storageProfile.totalCapacity;
   const preservedFoodCapacity = storageProfile.preservedFoodCapacity;
   const storageUsed = calculateStorageUsed(state.inventory);
   const storedFood = calculateTotalStoredFood(state.inventory, state.foodCarry ?? 0);
-  const waterCapacity = calculateWaterCapacity(state.buildings);
+  const waterCapacity = calculateWaterCapacity(state.buildings, state.inventory);
   const effectiveSpeedFactor = fixedSpeedFactor ?? state.speedFactor;
   const buildingMaxPop = calculateMaxPopulation(state.buildings);
   const maxPop = state.isAbandoned
@@ -899,31 +980,7 @@ export function useStoneAgeVillage({
     isAbandoned: Boolean(state.isAbandoned),
   });
 
-  const busyUnits = useMemo(() => {
-    const busy = { gatherer: 0, hunter: 0, builder: 0, prospector: 0, scout: 0, caravan: 0 };
-    for (const task of state.tasks) {
-      if (
-        task.kind === 'build' ||
-        task.kind === 'upgrade' ||
-        task.kind === 'upgrade_main' ||
-        task.kind === 'upgrade_tier' ||
-        task.kind === 'upgrade_wall'
-      ) {
-        busy.builder += task.buildersUsed ?? 1;
-      } else if (task.kind === 'prospect') {
-        busy.prospector += 1;
-      } else if (task.kind === 'unit_action' || task.kind === 'expedition') {
-        if (task.units) {
-          for (const [id, q] of Object.entries(task.units)) {
-            if (busy[id] !== undefined) busy[id] += q ?? 0;
-          }
-        } else if (busy[task.unitId] !== undefined) {
-          busy[task.unitId] += 1;
-        }
-      }
-    }
-    return busy;
-  }, [state.tasks]);
+  const busyUnits = useMemo(() => calculateBusyUnits(state.tasks), [state.tasks]);
 
   const freeUnits = useMemo(
     () => ({
@@ -976,7 +1033,8 @@ export function useStoneAgeVillage({
         );
         const curPopUsed = calculatePopUsed({ units: prev.units, buildings: prev.buildings });
         if (curPopUsed + unitDef.popCost > curMaxPop) return prev;
-        if (!hasEnoughResources(prev.inventory, unitDef.trainingCost)) return prev;
+        const unitCost = getUnitTrainingCost(unitId, prev.unlockedTechs);
+        if (!hasEnoughResources(prev.inventory, unitCost)) return prev;
 
         const nextAnimals = { ...(prev.animals ?? {}) };
         for (const [aId, qty] of Object.entries(unitDef.requiredAnimal ?? {})) {
@@ -985,13 +1043,48 @@ export function useStoneAgeVillage({
 
         return {
           ...prev,
-          inventory: spendResources(prev.inventory, unitDef.trainingCost),
+          inventory: spendResources(prev.inventory, unitCost),
           animals: nextAnimals,
           units: {
             ...prev.units,
             [unitId]: (prev.units[unitId] ?? 0) + 1,
           },
           logs: [`Trained 1 ${unitDef.name} (${curPopUsed + unitDef.popCost}/${curMaxPop} pop).`, ...prev.logs].slice(0, 24),
+        };
+      });
+    },
+    [updateSessionState],
+  );
+
+  const dismissUnit = useCallback(
+    (unitId) => {
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        const unitDef = UNITS[unitId];
+        if (!unitDef) return prev;
+
+        const busy = calculateBusyUnits(prev.tasks);
+        const currentCount = prev.units?.[unitId] ?? 0;
+        const freeCount = Math.max(0, currentCount - (busy[unitId] ?? 0));
+        if (freeCount < 1) return prev;
+
+        const nextUnits = {
+          ...prev.units,
+          [unitId]: currentCount - 1,
+        };
+        const curMaxPop = Math.max(
+          0,
+          calculateMaxPopulation(prev.buildings) - (prev.starvationPopLoss ?? 0),
+        );
+        const nextPopUsed = calculatePopUsed({ units: nextUnits, buildings: prev.buildings });
+
+        return {
+          ...prev,
+          units: nextUnits,
+          logs: [
+            `Dispensed 1 ${unitDef.name} (${nextPopUsed}/${curMaxPop} pop).`,
+            ...prev.logs,
+          ].slice(0, 24),
         };
       });
     },
@@ -1306,6 +1399,8 @@ export function useStoneAgeVillage({
           tier: perm.spawnTier,
           level: 1,
           status: 'constructing',
+          condition: 100,
+          graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS,
           arrivesAtMs: timing.arrivesAtMs,
           completedAtMs: timing.completedAtMs,
         };
@@ -1499,6 +1594,7 @@ export function useStoneAgeVillage({
         const recipe = RECIPES[recipeId];
         if (!building || building.status !== 'active' || !recipe) return prev;
         if (building.buildingId !== recipe.buildingId) return prev;
+        if (recipe.requiredTech && !prev.unlockedTechs.includes(recipe.requiredTech)) return prev;
         const batchQty = Math.max(1, Math.floor(Number(quantity) || 1));
         const waterCost = (recipe.waterCostBowls ?? 0) * batchQty;
         if ((prev.water ?? 0) < waterCost) return prev;
@@ -1903,7 +1999,7 @@ export function useStoneAgeVillage({
         const res = resolveCropHarvest({ plot: detail.cropPlot, unlockedTechs: prev.unlockedTechs });
         if (!res.itemId || res.harvestedQty <= 0) return prev;
 
-        const maxStorage = calculateStorageCapacity(prev.buildings).totalCapacity;
+        const maxStorage = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
         const added = addItemsWithinCapacity(prev.inventory, { [res.itemId]: res.harvestedQty }, maxStorage);
 
         return {
@@ -1921,22 +2017,27 @@ export function useStoneAgeVillage({
   );
 
   const fertilizeCropPlotAction = useCallback(
-    ({ x, y }) => {
+    ({ x, y, itemId = 'manure' }) => {
       updateSessionState((prev) => {
-        if (prev.isAbandoned || (prev.inventory.manure ?? 0) < 1) return prev;
+        if (prev.isAbandoned || !FERTILIZER_TO_NUTRIENT[itemId] || (prev.inventory[itemId] ?? 0) < 1) {
+          return prev;
+        }
         const key = `${x},${y}`;
         const detail = prev.tileDetails?.[key] ?? {};
-        const nextInv = spendResources(prev.inventory, { manure: 1 });
-        if ((nextInv.manure ?? 0) <= 0) delete nextInv.manure;
+        const nextInv = spendResources(prev.inventory, { [itemId]: 1 });
+        if ((nextInv[itemId] ?? 0) <= 0) delete nextInv[itemId];
 
         return {
           ...prev,
           inventory: nextInv,
           tileDetails: {
             ...(prev.tileDetails ?? {}),
-            [key]: { ...detail, cropPlot: fertilizeCropPlot(detail.cropPlot) },
+            [key]: { ...detail, cropPlot: fertilizeCropPlot(detail.cropPlot, itemId) },
           },
-          logs: [`Fertilized Crop Field (${x}, ${y}) with Manure.`, ...prev.logs].slice(0, 24),
+          logs: [
+            `Fertilized Crop Field (${x}, ${y}) with ${RESOURCES[itemId]?.name ?? itemId} (+${FERTILIZER_TO_NUTRIENT[itemId]}).`,
+            ...prev.logs,
+          ].slice(0, 24),
         };
       });
     },
@@ -1986,7 +2087,7 @@ export function useStoneAgeVillage({
         });
         if (!res.itemId || res.harvestedQty <= 0) return prev;
 
-        const maxStorage = calculateStorageCapacity(prev.buildings).totalCapacity;
+        const maxStorage = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
         const added = addItemsWithinCapacity(prev.inventory, { [res.itemId]: res.harvestedQty }, maxStorage);
 
         return {
@@ -2014,13 +2115,124 @@ export function useStoneAgeVillage({
 
         const spent = spendResources(prev.inventory, { [giveId]: qty });
         if ((spent[giveId] ?? 0) <= 0) delete spent[giveId];
-        const maxStorage = calculateStorageCapacity(prev.buildings).totalCapacity;
+        const maxStorage = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
         const added = addItemsWithinCapacity(spent, { [receiveId]: qty }, maxStorage);
 
         return {
           ...prev,
           inventory: added.inventory,
           logs: [`Market 1:1 trade: ${qty} ${RESOURCES[giveId]?.name ?? giveId} -> ${qty} ${RESOURCES[receiveId]?.name ?? receiveId}.`, ...prev.logs].slice(0, 24),
+        };
+      });
+    },
+    [updateSessionState],
+  );
+
+  const repairBuilding = useCallback(
+    (instanceId) => {
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        const target = prev.buildings.find((b) => b.instanceId === instanceId);
+        if (!target || target.status !== 'active') return prev;
+        const cost = calculateBuildingRepairCost(target);
+        if (Object.keys(cost).length === 0 || !hasEnoughResources(prev.inventory, cost)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          inventory: spendResources(prev.inventory, cost),
+          buildings: prev.buildings.map((b) =>
+            b.instanceId === instanceId
+              ? { ...b, condition: 100, graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS }
+              : b,
+          ),
+          logs: [
+            `Repaired ${BUILDINGS[target.buildingId].name} to 100% condition.`,
+            ...prev.logs,
+          ].slice(0, 24),
+        };
+      });
+    },
+    [updateSessionState],
+  );
+
+  const repairAllBuildings = useCallback(() => {
+    updateSessionState((prev) => {
+      if (prev.isAbandoned) return prev;
+      const cost = calculateRepairAllCost(prev.buildings);
+      if (Object.keys(cost).length === 0 || !hasEnoughResources(prev.inventory, cost)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        inventory: spendResources(prev.inventory, cost),
+        buildings: prev.buildings.map((b) =>
+          b.status === 'active'
+            ? { ...b, condition: 100, graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS }
+            : b,
+        ),
+        logs: ['Repaired all damaged village buildings to 100%.', ...prev.logs].slice(0, 24),
+      };
+    });
+  }, [updateSessionState]);
+
+  const demolishBuilding = useCallback(
+    (instanceId) => {
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        const target = prev.buildings.find((b) => b.instanceId === instanceId);
+        const check = canDemolishBuilding({
+          building: target,
+          buildings: prev.buildings,
+          units: prev.units,
+          starvationPopLoss: prev.starvationPopLoss ?? 0,
+        });
+        if (!check.allowed) return prev;
+
+        const nextBuildings = prev.buildings.filter((b) => b.instanceId !== instanceId);
+        const nextTasks = prev.tasks.filter(
+          (t) => t.instanceId !== instanceId && t.buildingInstanceId !== instanceId,
+        );
+        const nextTileDetails = { ...(prev.tileDetails ?? {}) };
+        delete nextTileDetails[`${target.x},${target.y}`];
+        const nextWaterCap = calculateWaterCapacity(nextBuildings, prev.inventory);
+
+        return {
+          ...prev,
+          buildings: nextBuildings,
+          tasks: nextTasks,
+          tileDetails: nextTileDetails,
+          water: Math.min(prev.water ?? 0, nextWaterCap),
+          logs: [
+            `Destroyed ${BUILDINGS[target.buildingId].name} at (${target.x}, ${target.y}).`,
+            ...prev.logs,
+          ].slice(0, 24),
+        };
+      });
+    },
+    [updateSessionState],
+  );
+
+  const slaughterAnimal = useCallback(
+    ({ animalId, count = 1 }) => {
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        const res = slaughterLivestock({ animals: prev.animals, animalId, count });
+        if (res.slaughtered <= 0) return prev;
+        const maxStorage = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
+        const added = addItemsWithinCapacity(prev.inventory, res.yields, maxStorage);
+        const yieldSummary = Object.entries(res.yields)
+          .map(([id, q]) => `+${q} ${RESOURCES[id]?.name ?? id}`)
+          .join(', ');
+
+        return {
+          ...prev,
+          animals: res.animals,
+          inventory: added.inventory,
+          logs: [
+            `Butchered ${res.slaughtered} ${LIVESTOCK[animalId]?.name ?? animalId}: ${yieldSummary}.`,
+            ...prev.logs,
+          ].slice(0, 24),
         };
       });
     },
@@ -2145,6 +2357,7 @@ export function useStoneAgeVillage({
     setSpeedFactor,
     resetVillage,
     trainUnit,
+    dismissUnit,
     removeResource,
     dispatchTileAction,
     prospectTile,
@@ -2164,6 +2377,10 @@ export function useStoneAgeVillage({
     plantOrchardAction,
     harvestOrchardAction,
     tradeMarketResources,
+    repairBuilding,
+    repairAllBuildings,
+    demolishBuilding,
+    slaughterAnimal,
     unlockAllTerritoryFog,
     unlockAllContinentFog,
     jumpSimulationDays,

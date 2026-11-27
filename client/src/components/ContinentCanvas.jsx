@@ -68,6 +68,7 @@ function getInitialViewport(gridSize, focusCoords, continentFog, showFog) {
  * @param {boolean} [props.showFog=true]
  * @param {boolean} [props.coordsOnlyTooltip=false]
  * @param {{ x: number, y: number } | null} [props.villageCoords=null]
+ * @param {Array<{ x: number, y: number }>} [props.abandonedCoords=[]]
  * @param {{ x: number, y: number }} props.selectedCoords
  * @param {(coords: { x: number, y: number }) => void} [props.onSelectTile]
  * @param {(payload: { x: number, y: number, tile: object, clientX: number, clientY: number }) => void} [props.onOpenTileMenu]
@@ -84,6 +85,7 @@ export default function ContinentCanvas({
   showFog = true,
   coordsOnlyTooltip = false,
   villageCoords = null,
+  abandonedCoords = [],
   selectedCoords,
   onSelectTile,
   onOpenTileMenu,
@@ -182,6 +184,26 @@ export default function ContinentCanvas({
       }
     }
 
+    for (const ruined of abandonedCoords ?? []) {
+      if (
+        ruined.x >= startX &&
+        ruined.x <= endX &&
+        ruined.y >= startY &&
+        ruined.y <= endY
+      ) {
+        const ax = Math.floor(offsetX + ruined.x * tileSize);
+        const ay = Math.floor(offsetY + ruined.y * tileSize);
+        const aw = Math.max(1, Math.floor(offsetX + (ruined.x + 1) * tileSize) - ax);
+        const ah = Math.max(1, Math.floor(offsetY + (ruined.y + 1) * tileSize) - ay);
+        const pad = Math.max(2, Math.floor(Math.min(aw, ah) * 0.2));
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(ax + pad, ay + pad, Math.max(3, aw - pad * 2), Math.max(3, ah - pad * 2));
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(ax + pad, ay + pad, Math.max(3, aw - pad * 2), Math.max(3, ah - pad * 2));
+      }
+    }
+
     if (
       selectedCoords &&
       selectedCoords.x >= startX &&
@@ -206,6 +228,7 @@ export default function ContinentCanvas({
     continentFog,
     showFog,
     villageCoords,
+    abandonedCoords,
     selectedCoords,
     viewport,
   ]);
@@ -414,6 +437,8 @@ export default function ContinentCanvas({
                   {hoveredTile.isObelisk && ' · ★'}
                 </>
               )}
+              {(abandonedCoords ?? []).some((a) => a.x === hoveredTile.x && a.y === hoveredTile.y) &&
+                ' · Abandoned'}
               {coordsOnlyTooltip && hoveredShrouded ? ' · Fog' : ''}
             </div>
           )}

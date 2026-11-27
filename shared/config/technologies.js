@@ -29,6 +29,8 @@ export const AGE_TIERS = Object.freeze({
  * @param {'tool' | 'age'} [config.category='tool'] - Node classification.
  * @param {string | null} [config.toolType='general'] - Specialization ('general' in Stone Age, split later).
  * @param {string | null} [config.researchedAt=null] - Building ID where research runs (null if starter/automatic).
+ * @param {'starter' | 'passive' | 'research'} [config.researchMode] - Explicit unlock classification (`passive` for empty-cost trigger unlocks).
+ * @param {string | null} [config.unlocksRecipe=null] - Recipe ID unlocked immediately when researched (`[Research] -> [Craft]`).
  * @param {string[]} [config.prerequisites=[]] - Prerequisite tech IDs required before research.
  * @param {object} [config.unlockTrigger={ type: 'starter' }] - Gameplay event unlocking this branch.
  * @param {Record<string, number>} [config.cost={}] - Materials consumed to research this node.
@@ -68,6 +70,9 @@ export function createTechnology(config) {
     category: config.category ?? 'tool',
     toolType: config.toolType !== undefined ? config.toolType : 'general',
     researchedAt: config.researchedAt ?? null,
+    researchMode:
+      config.researchMode ?? (Object.keys(config.cost ?? {}).length === 0 ? 'passive' : 'research'),
+    unlocksRecipe: config.unlocksRecipe ?? null,
     prerequisites: Object.freeze([...(config.prerequisites ?? [])]),
     unlockTrigger: Object.freeze({ ...(config.unlockTrigger ?? { type: 'starter' }) }),
     cost: Object.freeze({ ...(config.cost ?? {}) }),
@@ -124,6 +129,43 @@ export const TECHNOLOGIES = Object.freeze({
     },
     unlocksBuildings: ['kiln'],
     description: 'Knapped stone implements: +20% work speed, +1 max loot, halves empty rolls, and unlocks Clay Kilns.',
+  }),
+  basket_weaving: createTechnology({
+    id: 'basket_weaving',
+    name: 'Woven Baskets',
+    age: 'stone',
+    tier: 1,
+    category: 'tool',
+    toolType: 'container',
+    researchedAt: 'firepit',
+    researchMode: 'research',
+    unlocksRecipe: 'craft_woven_basket',
+    prerequisites: ['wood_tools'],
+    unlockTrigger: { type: 'build', buildingId: 'firepit', count: 1 },
+    cost: { sticks: 4, straw: 3 },
+    researchTimeHours: 0.8,
+    modifiers: {
+      workSpeedMultiplier: 1.05,
+      yieldBonus: 1,
+      nothingWeightMultiplier: 0.9,
+    },
+    description: 'Transforms Firepit Weaving into Craft Woven Basket (+15 general storage bulk each).',
+  }),
+  clay_vessels: createTechnology({
+    id: 'clay_vessels',
+    name: 'Clay Vessels',
+    age: 'stone',
+    tier: 2,
+    category: 'tool',
+    toolType: 'pottery',
+    researchedAt: 'kiln',
+    researchMode: 'research',
+    unlocksRecipe: 'craft_clay_vessel',
+    prerequisites: ['stone_tools'],
+    unlockTrigger: { type: 'build', buildingId: 'kiln', count: 1 },
+    cost: { clay: 4, sticks: 2 },
+    researchTimeHours: 1.0,
+    description: 'Unlocks firing Clay Vessels at Kiln (+10 water bowls & +20 preserved food cap each).',
   }),
   copper_age: createTechnology({
     id: 'copper_age',

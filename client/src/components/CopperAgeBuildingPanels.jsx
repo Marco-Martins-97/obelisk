@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   BUILDINGS,
   CROPS,
+  FERTILIZER_TO_NUTRIENT,
   LIVESTOCK,
   ORCHARD_TREES,
   RESOURCES,
@@ -10,6 +11,7 @@ import {
   getBuildingUpgradePreview,
 } from '@obelisk/shared';
 import CostInline from './CostInline.jsx';
+import { formatRealHoursHMS } from '../utils/timeFormat.js';
 
 /**
  * Renders specialized Stage 4 (Copper Age) building management controls inside BuildingModal:
@@ -94,7 +96,12 @@ export default function CopperAgeBuildingPanels({
             {!isConstructing && !atCap && (
               <p className="text-[11px] text-slate-300">
                 {wall.level === 0 ? 'Build' : `Upgrade -> T${nextTier} Lv ${nextLv}`}:{' '}
-                <CostInline cost={wallCost} inventory={state.inventory} />
+                <CostInline cost={wallCost} inventory={state.inventory} /> ·{' '}
+                {formatRealHoursHMS(
+                  wallDef.buildTimeHours,
+                  village.effectiveSpeedFactor ?? state.speedFactor ?? 6,
+                  state.efficiencyPenalty ?? 0,
+                )}
               </p>
             )}
           </div>
@@ -130,6 +137,7 @@ export default function CopperAgeBuildingPanels({
       building,
       tile,
       tileDetail,
+      territory,
       unlockedTechs: state.unlockedTechs,
       efficiencyPenalty: state.efficiencyPenalty ?? 0,
     });
@@ -225,6 +233,13 @@ export default function CopperAgeBuildingPanels({
     const crop = plot.cropId ? CROPS[plot.cropId] : null;
     const isSpring = village.calendar?.season === 'spring';
 
+    const rawNutrients = plot.nutrients ?? {};
+    const nutrients = {
+      N: rawNutrients.N ?? rawNutrients.A ?? 100,
+      P: rawNutrients.P ?? rawNutrients.B ?? 100,
+      K: rawNutrients.K ?? rawNutrients.C ?? 100,
+    };
+
     return (
       <section className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
         <div className="flex items-center justify-between">
@@ -233,9 +248,13 @@ export default function CopperAgeBuildingPanels({
         </div>
 
         <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
-          {['A', 'B', 'C'].map((nKey) => (
-            <div key={nKey} className="rounded border border-slate-800 bg-slate-900 px-2 py-1 text-center">
-              Nutrient {nKey}: <strong className="text-emerald-300">{Math.round(plot.nutrients?.[nKey] ?? 100)}%</strong>
+          {[
+            { key: 'N', title: 'Nitrogen (N)' },
+            { key: 'P', title: 'Phosphorus (P)' },
+            { key: 'K', title: 'Potassium (K)' },
+          ].map(({ key, title }) => (
+            <div key={key} className="rounded border border-slate-800 bg-slate-900 px-2 py-1 text-center">
+              {title}: <strong className="text-emerald-300">{Math.round(nutrients[key])}%</strong>
             </div>
           ))}
         </div>
@@ -291,14 +310,19 @@ export default function CopperAgeBuildingPanels({
             </button>
           )}
 
-          <button
-            type="button"
-            disabled={isAbandoned || (state.inventory.manure ?? 0) < 1}
-            onClick={() => village.fertilizeCropPlotAction({ x: building.x, y: building.y })}
-            className="rounded border border-emerald-700 bg-emerald-950/60 px-2.5 py-1 text-[11px] text-emerald-200 hover:bg-emerald-900/70 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Fertilize (-1 Manure, {state.inventory.manure ?? 0} left)
-          </button>
+          {Object.entries(FERTILIZER_TO_NUTRIENT).map(([itemId, nKey]) => (
+            <button
+              key={itemId}
+              type="button"
+              disabled={isAbandoned || (state.inventory[itemId] ?? 0) < 1}
+              onClick={() =>
+                village.fertilizeCropPlotAction({ x: building.x, y: building.y, itemId })
+              }
+              className="rounded border border-emerald-700 bg-emerald-950/60 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-900/70 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              +{nKey} {RESOURCES[itemId]?.name ?? itemId} ({state.inventory[itemId] ?? 0})
+            </button>
+          ))}
         </div>
       </section>
     );
@@ -371,16 +395,34 @@ export default function CopperAgeBuildingPanels({
           </span>
         </div>
         <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
-          {Object.values(LIVESTOCK).map((spec) => (
-            <div key={spec.id} className="rounded border border-slate-800 bg-slate-900 px-2 py-1">
-              <div className="text-slate-100">
-                {spec.name}: <strong>{animals[spec.id] ?? 0}</strong>
+          {Object.values(LIVESTOCK).map((spec) => {
+            const count = animals[spec.id] ?? 0;
+            const slaughterText = Object.entries(spec.slaughterYield ?? {})
+              .map(([id, q]) => `+${q} ${RESOURCES[id]?.name ?? id}`)
+              .join(', ');
+            return (
+              <div key={spec.id} className="rounded border border-slate-800 bg-slate-900 px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2 text-slate-100">
+                  <span>
+                    {spec.name}: <strong>{count}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Kill 1 ${spec.name}`}
+                    disabled={isAbandoned || count < 1}
+                    onClick={() => village.slaughterAnimal({ animalId: spec.id, count: 1 })}
+                    className="rounded border border-rose-700/70 bg-rose-950/60 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-900/70 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Kill -1
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Daily: +1 Manure{spec.dailyOutputId ? `, +1 ${RESOURCES[spec.dailyOutputId]?.name}` : ''}
+                </div>
+                <div className="text-[10px] text-slate-500">Slaughter: {slaughterText}</div>
               </div>
-              <div className="text-[10px] text-slate-400">
-                -1 Grain, -1 Water → +1 Manure{spec.dailyOutputId ? `, +1 ${RESOURCES[spec.dailyOutputId]?.name}` : ''}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
     );

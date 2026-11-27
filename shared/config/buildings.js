@@ -189,9 +189,16 @@ export const BUILDINGS = Object.freeze({
     buildersRequired: 1,
     buildTimeHours: 1.5,
     cost: { sticks: 4, small_stones: 3 },
-    researchesTechs: ['stone_tools'],
-    craftsRecipes: ['cook_meat', 'cook_fish', 'boil_salt'],
-    description: 'Cooks meat/fish, boils water into salt, and researches Stone Tools.',
+    researchesTechs: ['stone_tools', 'basket_weaving'],
+    craftsRecipes: [
+      'cook_meat',
+      'cook_fish',
+      'boil_salt',
+      'burn_wood_ash',
+      'crush_bone_meal',
+      'craft_woven_basket',
+    ],
+    description: 'Cooks meat/fish, boils salt, burns ash/bone meal, weaves baskets, and researches Stone Tools.',
   }),
   house: createBuilding({
     id: 'house',
@@ -235,14 +242,16 @@ export const BUILDINGS = Object.freeze({
     buildTimeHours: 3.0,
     requiredTechs: ['stone_tools'],
     cost: { small_stones: 5, clay: 8, straw: 4, sticks: 4 },
+    researchesTechs: ['clay_vessels'],
     craftsRecipes: [
       'craft_charcoal',
+      'craft_clay_vessel',
       'smelt_copper_ingot',
       'smelt_copper_ore',
       'smelt_bronze_ingot',
       'smelt_bronze_from_ore',
     ],
-    description: 'Produces charcoal and smelts Copper & Bronze ingots.',
+    description: 'Produces charcoal + ash, fires Clay Vessels, and smelts Copper & Bronze ingots.',
   }),
 
   // Stage 4: Copper Age buildings (Tier 2 base, upgradeable to Tier 3+ resetting level to 1)

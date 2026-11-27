@@ -1,8 +1,9 @@
 import { RESOURCES } from '@obelisk/shared';
 
 /**
- * Renders a comma-separated resource cost breakdown where missing items (or missing water bowls)
- * are highlighted in red (`text-rose-400`) while sufficient entries stay neutral.
+ * Renders a comma-separated resource cost breakdown formatted as `have/needed Resource`,
+ * where missing items (or missing water bowls) are highlighted in red (`text-rose-400`)
+ * while sufficient entries stay neutral.
  *
  * @param {object} props
  * @param {Record<string, number>} [props.cost={}] - Required resource quantities keyed by resourceId.
@@ -45,7 +46,7 @@ export default function CostInline({
           <span key={entry.id}>
             {idx > 0 ? ', ' : ''}
             <span className={isMissing ? 'font-semibold text-rose-400' : 'text-slate-300'}>
-              {entry.qty} {entry.name}
+              {entry.have}/{entry.qty} {entry.name}
             </span>
           </span>
         );

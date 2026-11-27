@@ -135,6 +135,36 @@ export const RESOURCES = Object.freeze({
     sizeClass: 1,
     description: 'Mineral salt harvested by boiling water or mining limestone and shale layers.',
   }),
+  bone_meal: createResource({
+    id: 'bone_meal',
+    name: 'Bone Meal',
+    category: 'material',
+    sizeClass: 1,
+    description: 'Crushed animal bones restoring Phosphorus (P) nutrient levels in Crop Fields.',
+  }),
+  wood_ash: createResource({
+    id: 'wood_ash',
+    name: 'Wood Ash',
+    category: 'material',
+    sizeClass: 1,
+    description: 'Kiln/Firepit ash restoring Potassium (K) nutrient levels in Crop Fields.',
+  }),
+  woven_basket: createResource({
+    id: 'woven_basket',
+    name: 'Woven Basket',
+    category: 'material',
+    sizeClass: 2,
+    description: 'Woven stick-and-straw container expanding pooled village bulk storage by +15 per basket.',
+  }),
+  clay_vessel: createResource({
+    id: 'clay_vessel',
+    name: 'Clay Vessel',
+    category: 'material',
+    age: 'stone',
+    tier: 1,
+    sizeClass: 2,
+    description: 'Fired pottery jar adding +10 water bowl storage and +20 preserved food capacity.',
+  }),
 
   // Food & sustenance items
   berries: createResource({

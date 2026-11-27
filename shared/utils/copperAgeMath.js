@@ -17,6 +17,7 @@ import {
   classifyOreDensitySample,
 } from '../config/farming.js';
 import { RESOURCES } from '../config/resources.js';
+import { RECIPES } from '../config/recipes.js';
 import { TECHNOLOGIES } from '../config/technologies.js';
 import { UNITS } from '../config/units.js';
 import {
@@ -28,6 +29,8 @@ import {
 import { ORES } from '../config/worldGeology.js';
 import { TERRITORY_FOREST_THRESHOLD } from '../generators/territoryGenerator.js';
 import {
+  calculateMaxPopulation,
+  calculatePopUsed,
   calculateStorageCapacity,
   calculateStorageUsed,
   calculateTierLevelValue,
@@ -357,6 +360,7 @@ function getProductionToolMultiplier(buildingId, unlockedTechs) {
  * @param {object} params.building
  * @param {object} params.tile
  * @param {object} [params.tileDetail={}]
+ * @param {object | null} [params.territory=null]
  * @param {string[]} [params.unlockedTechs=[]]
  * @param {number} [params.efficiencyPenalty=0]
  * @returns {Array<{ resourceId: string, ratePerDay: number, remaining: number | null, oreId?: string }>}
@@ -365,18 +369,22 @@ export function getBuildingDailyProduction({
   building,
   tile,
   tileDetail = {},
+  territory = null,
   unlockedTechs = [],
   efficiencyPenalty = 0,
 }) {
   const def = building ? BUILDINGS[building.buildingId] : null;
   if (!def?.productionTierBases || (building.status && building.status !== 'active')) return [];
 
+  const conditionMult = Math.max(0, Math.min(1, (building.condition ?? 100) / 100));
+  if (conditionMult <= 0) return [];
+
   const tier = building.tier ?? def.tier;
   const level = Math.max(1, Math.min(building.level ?? 1, def.maxLevel));
   const basePerDay = calculateTierLevelValue(def.productionTierBases, tier, level, def.maxLevel);
   const toolMult = getProductionToolMultiplier(def.id, unlockedTechs);
   const effMult = Math.max(0.2, 1 - efficiencyPenalty);
-  const effectiveDaily = basePerDay * toolMult * effMult;
+  const effectiveDaily = basePerDay * toolMult * effMult * conditionMult;
 
   if (def.id === 'mine') {
     const oreLeftMap = tileDetail.oreLeft ?? initializeTileDeposit('mine', tile).oreLeft ?? {};
@@ -413,7 +421,18 @@ export function getBuildingDailyProduction({
   }
 
   if (def.id === 'well') {
-    return [{ resourceId: 'water', ratePerDay: Math.round(effectiveDaily * 100) / 100, remaining: null }];
+    const tileMoist = Math.max(0, Math.min(1, Number(tile?.moisture ?? 0.5)));
+    const terrMoist = territory?.tiles?.length
+      ? territory.tiles.reduce((s, t) => s + (t.moisture ?? 0.5), 0) / territory.tiles.length
+      : tileMoist;
+    const moistureMult = 0.5 + 0.7 * terrMoist + 0.3 * tileMoist;
+    return [
+      {
+        resourceId: 'water',
+        ratePerDay: Math.round(effectiveDaily * moistureMult * 100) / 100,
+        remaining: null,
+      },
+    ];
   }
 
   return [];
@@ -454,7 +473,7 @@ export function advanceContinuousProduction({
   const nextTileDetails = { ...tileDetails };
   const nextCarry = { ...productionCarry };
 
-  const maxStorage = calculateStorageCapacity(buildings).totalCapacity;
+  const maxStorage = calculateStorageCapacity(buildings, nextInventory).totalCapacity;
   let usedStorage = calculateStorageUsed(nextInventory);
   const size = territory?.size ?? 25;
 
@@ -472,6 +491,7 @@ export function advanceContinuousProduction({
       building: bld,
       tile,
       tileDetail: detail,
+      territory,
       unlockedTechs,
       efficiencyPenalty,
     });
@@ -528,7 +548,29 @@ export function advanceContinuousProduction({
   };
 }
 
-/** Creates a default empty Crop Field plot state (64 slots, nutrients A/B/C at 100). */
+/** Grace days after construction or full repair before daily building decay begins. */
+export const BUILDING_DEGRADATION_GRACE_DAYS = 3;
+
+/** Average active building condition (%) below which a village collapses as Abandoned. */
+export const VILLAGE_ABANDON_AVG_CONDITION = 20;
+
+/** Maps fertilizer resource IDs to Crop Field nutrients: N (Manure), P (Bone Meal), K (Wood Ash). */
+export const FERTILIZER_TO_NUTRIENT = Object.freeze({
+  manure: 'N',
+  bone_meal: 'P',
+  wood_ash: 'K',
+});
+
+/** Normalizes legacy `A/B/C` soil nutrient keys into `N/P/K`. */
+function normalizeCropNutrients(raw) {
+  return {
+    N: raw?.N ?? raw?.A ?? 100,
+    P: raw?.P ?? raw?.B ?? 100,
+    K: raw?.K ?? raw?.C ?? 100,
+  };
+}
+
+/** Creates a default empty Crop Field plot state (64 slots, nutrients N/P/K at 100). */
 export function createEmptyCropPlot() {
   return {
     cropId: null,
@@ -537,7 +579,7 @@ export function createEmptyCropPlot() {
     grownDays: 0,
     matureDays: 0,
     status: 'empty',
-    nutrients: { A: 100, B: 100, C: 100 },
+    nutrients: { N: 100, P: 100, K: 100 },
   };
 }
 
@@ -555,7 +597,7 @@ export function createEmptyOrchardPlot() {
 /**
  * Advances all Crop Fields and Orchards by `elapsedDays` in-game days:
  * - Crop Fields grow over `60` days, enter `30`-day harvest window, and wither if unharvested or outside safe °C.
- * - Unconsumed nutrients `A/B/C` regenerate `+2%/day`.
+ * - Unconsumed nutrients `N/P/K` regenerate `+2%/day`.
  * - Orchards take `336` days to mature and sustain frost/heat losses outside `[minTempC, maxTempC]`.
  *
  * @param {object} params
@@ -576,12 +618,14 @@ export function advanceCropFieldsAndOrchards({
 
     if (bld.buildingId === 'crop_field') {
       const detail = { ...(nextDetails[key] ?? {}) };
-      const plot = detail.cropPlot ? { ...detail.cropPlot, nutrients: { ...detail.cropPlot.nutrients } } : createEmptyCropPlot();
+      const plot = detail.cropPlot
+        ? { ...detail.cropPlot, nutrients: normalizeCropNutrients(detail.cropPlot.nutrients) }
+        : createEmptyCropPlot();
 
       for (let d = 0; d < elapsedDays; d += 1) {
-        // Regenerate nutrients naturally each day when not currently being drained.
+        // Regenerate N/P/K nutrients naturally each day when not actively drained.
         const crop = plot.cropId ? CROPS[plot.cropId] : null;
-        for (const nKey of ['A', 'B', 'C']) {
+        for (const nKey of ['N', 'P', 'K']) {
           if (!crop || crop.nutrientType !== nKey || plot.status === 'empty' || plot.status === 'withered') {
             plot.nutrients[nKey] = Math.min(100, Math.round((plot.nutrients[nKey] + 2) * 10) / 10);
           }
@@ -653,9 +697,10 @@ export function resolveCropHarvest({ plot, unlockedTechs = [] }) {
     return { harvestedQty: 0, itemId: null, plot: plot ?? createEmptyCropPlot() };
   }
   const crop = CROPS[plot.cropId];
+  const normalizedNutrients = normalizeCropNutrients(plot.nutrients);
   const hoeTool = getBestUnlockedTool(unlockedTechs, 'hoe');
   const toolBonus = hoeTool?.modifiers?.yieldBonus ?? 0;
-  const nutrientFactor = Math.max(0.35, Math.min(1, 0.35 + (plot.nutrients[crop.nutrientType] ?? 0) / 150));
+  const nutrientFactor = Math.max(0.35, Math.min(1, 0.35 + (normalizedNutrients[crop.nutrientType] ?? 0) / 150));
   const avgYield = (crop.yieldMin + crop.yieldMax) / 2 + toolBonus;
   const harvestedQty = Math.max(1, Math.round(plot.survivingSlots * avgYield * nutrientFactor));
 
@@ -664,7 +709,7 @@ export function resolveCropHarvest({ plot, unlockedTechs = [] }) {
     itemId: crop.harvestItemId,
     plot: {
       ...createEmptyCropPlot(),
-      nutrients: { ...plot.nutrients },
+      nutrients: normalizedNutrients,
     },
   };
 }
@@ -702,19 +747,25 @@ export function plantCropPlot({ plot, cropId, availableSeedQty }) {
 }
 
 /**
- * Applies 1 Manure Fertilizer bag to restore +20 points across Soil Nutrients A, B, and C.
+ * Applies 1 organic fertilizer item to restore +25 points to its paired nutrient:
+ * - `manure` -> Nitrogen (`N`)
+ * - `bone_meal` -> Phosphorus (`P`)
+ * - `wood_ash` -> Potassium (`K`)
  *
  * @param {object} plot
+ * @param {string} [itemId='manure']
  * @returns {object} Updated crop plot.
  */
-export function fertilizeCropPlot(plot) {
+export function fertilizeCropPlot(plot, itemId = 'manure') {
   const current = plot ?? createEmptyCropPlot();
+  const nutrients = normalizeCropNutrients(current.nutrients);
+  const targetKey = FERTILIZER_TO_NUTRIENT[itemId] ?? 'N';
+
   return {
     ...current,
     nutrients: {
-      A: Math.min(100, Math.round((current.nutrients.A + 20) * 10) / 10),
-      B: Math.min(100, Math.round((current.nutrients.B + 20) * 10) / 10),
-      C: Math.min(100, Math.round((current.nutrients.C + 20) * 10) / 10),
+      ...nutrients,
+      [targetKey]: Math.min(100, Math.round(((nutrients[targetKey] ?? 0) + 25) * 10) / 10),
     },
   };
 }
@@ -1261,6 +1312,7 @@ export function getVillageDailyProductionSummary({
       building,
       tile,
       tileDetail: detail,
+      territory,
       unlockedTechs,
       efficiencyPenalty,
     });
@@ -1290,4 +1342,216 @@ export function getVillageDailyProductionSummary({
   }
 
   return Array.from(map.values()).sort((a, b) => b.ratePerDay - a.ratePerDay);
+}
+
+/**
+ * Advances daily structural wear across active buildings after their 3-day grace buffer expires.
+ * Winter doubles wear (4%/day vs 2%/day), reduced up to -80% by City Walls.
+ * Collapses the village as Abandoned when average active building condition drops below `20%`.
+ *
+ * @param {object} params
+ * @returns {{ buildings: Array<object>, averageCondition: number, abandonedByDegradation: boolean }}
+ */
+export function advanceDailyBuildingDegradation({
+  buildings = [],
+  wall = null,
+  season = 'spring',
+  elapsedDays = 1,
+}) {
+  const days = Math.max(0, Math.floor(elapsedDays));
+  const dailyBase = season === 'winter' ? 4 : 2;
+  const wallMitigation = getWallBonuses(wall).degradationReduction;
+  const wearPerDay = Math.round(dailyBase * (1 - wallMitigation) * 100) / 100;
+
+  let activeCount = 0;
+  let condSum = 0;
+  const nextBuildings = (buildings ?? []).map((b) => {
+    if (b.status && b.status !== 'active') return b;
+    let grace = b.graceDaysRemaining ?? BUILDING_DEGRADATION_GRACE_DAYS;
+    let cond = b.condition ?? 100;
+
+    for (let d = 0; d < days; d += 1) {
+      if (grace > 0) {
+        grace -= 1;
+      } else {
+        cond = Math.max(0, Math.round((cond - wearPerDay) * 100) / 100);
+      }
+    }
+
+    activeCount += 1;
+    condSum += cond;
+    return { ...b, condition: cond, graceDaysRemaining: grace };
+  });
+
+  const averageCondition =
+    activeCount > 0 ? Math.round((condSum / activeCount) * 100) / 100 : 100;
+  const abandonedByDegradation =
+    activeCount > 0 && averageCondition < VILLAGE_ABANDON_AVG_CONDITION;
+
+  return { buildings: nextBuildings, averageCondition, abandonedByDegradation };
+}
+
+/**
+ * Computes material cost to repair a single damaged building back to 100% condition.
+ * Cost scales linearly with missing durability and `0.5x` scaled tier/level build cost.
+ *
+ * @param {object} building
+ * @returns {Record<string, number>} Required repair items.
+ */
+export function calculateBuildingRepairCost(building) {
+  if (!building) return {};
+  const cond = Math.max(0, Math.min(100, building.condition ?? 100));
+  const missing = 100 - cond;
+  if (missing <= 0) return {};
+
+  const def = BUILDINGS[building.buildingId];
+  if (!def) return {};
+  const baseCost =
+    Object.keys(def.cost ?? {}).length > 0 ? def.cost : { sticks: 8, pelts: 5, straw: 5 };
+  const scale = (building.tier ?? def.tier ?? 1) * (building.level ?? 1) * (missing / 100) * 0.5;
+
+  const repairCost = {};
+  for (const [resId, qty] of Object.entries(baseCost)) {
+    const needed = Math.max(1, Math.ceil(qty * scale));
+    if (needed > 0) repairCost[resId] = needed;
+  }
+  return repairCost;
+}
+
+/**
+ * Aggregates material costs to repair every damaged active building in the settlement.
+ *
+ * @param {Array<object>} buildings
+ * @returns {Record<string, number>} Combined repair cost map.
+ */
+export function calculateRepairAllCost(buildings = []) {
+  const combined = {};
+  for (const bld of buildings ?? []) {
+    const cost = calculateBuildingRepairCost(bld);
+    for (const [resId, qty] of Object.entries(cost)) {
+      combined[resId] = (combined[resId] ?? 0) + qty;
+    }
+  }
+  return combined;
+}
+
+/**
+ * Validates whether a building can be demolished cleanly without dropping population housing below
+ * active `popUsed` or stranding attached Crop Fields / Animal Pens / Orchards.
+ *
+ * @param {object} params
+ * @returns {{ allowed: boolean, reason: string | null }} Demolish permission check.
+ */
+export function canDemolishBuilding({
+  building,
+  buildings = [],
+  units = {},
+  starvationPopLoss = 0,
+}) {
+  if (!building || building.buildingId === 'main') {
+    return { allowed: false, reason: 'Cannot destroy Main Village Hall.' };
+  }
+
+  const after = buildings.filter((b) => b.instanceId !== building.instanceId);
+  const afterMaxPop = Math.max(0, calculateMaxPopulation(after) - starvationPopLoss);
+  const afterPopUsed = calculatePopUsed({ units, buildings: after });
+  if (afterPopUsed > afterMaxPop) {
+    return {
+      allowed: false,
+      reason: 'Insufficient remaining housing capacity for active population.',
+    };
+  }
+
+  if (building.buildingId === 'farm') {
+    const attachmentsUsed = after.filter(
+      (b) =>
+        b.buildingId === 'crop_field' || b.buildingId === 'animal_pen' || b.buildingId === 'orchard',
+    ).length;
+    if (attachmentsUsed > calculateFarmMaxAttachments(after)) {
+      return {
+        allowed: false,
+        reason: 'Destroy attached Fields, Pens, or Orchards first.',
+      };
+    }
+  }
+
+  return { allowed: true, reason: null };
+}
+
+/**
+ * Slaughters `count` animals of `animalId` from Animal Pens, returning butchered Meat, Bones & Pelts.
+ *
+ * @param {object} params
+ * @returns {{ animals: Record<string, number>, slaughtered: number, yields: Record<string, number> }}
+ */
+export function slaughterLivestock({ animals = {}, animalId, count = 1 }) {
+  const spec = LIVESTOCK[animalId];
+  const have = Math.max(0, Math.floor(animals?.[animalId] ?? 0));
+  const slaughtered = spec ? Math.min(have, Math.max(0, Math.floor(Number(count) || 0))) : 0;
+  if (!spec || slaughtered <= 0) {
+    return { animals: { ...animals }, slaughtered: 0, yields: {} };
+  }
+
+  const nextAnimals = { ...animals, [animalId]: have - slaughtered };
+  const yields = {};
+  for (const [resId, qty] of Object.entries(spec.slaughterYield ?? {})) {
+    if (qty > 0) yields[resId] = qty * slaughtered;
+  }
+
+  return { animals: nextAnimals, slaughtered, yields };
+}
+
+/**
+ * Groups building crafting recipes sharing the same `primaryOutputId` so UI modals render
+ * a single `Craft` button per product, auto-picking an affordable variant (favoring Ore over Nuggets).
+ *
+ * @param {object} params
+ * @returns {Array<{
+ *   primaryOutputId: string,
+ *   outputName: string,
+ *   recipes: Array<object>,
+ *   activeRecipe: object,
+ *   hasAnyCraftable: boolean,
+ * }>} Grouped output rows.
+ */
+export function groupBuildingRecipesByOutput({
+  recipeIds = [],
+  unlockedTechs = [],
+  inventory = {},
+  water = 0,
+}) {
+  const unlockedSet = new Set(unlockedTechs);
+  const groupsMap = new Map();
+
+  const canCraftOne = (recipe) =>
+    water >= (recipe.waterCostBowls ?? 0) &&
+    Object.entries(recipe.inputs ?? {}).every(([id, q]) => (inventory[id] ?? 0) >= q);
+
+  for (const recipeId of recipeIds ?? []) {
+    const recipe = RECIPES[recipeId];
+    if (!recipe) continue;
+    if (recipe.requiredTech && !unlockedSet.has(recipe.requiredTech)) continue;
+
+    const outId = recipe.primaryOutputId ?? Object.keys(recipe.outputs ?? {})[0];
+    if (!groupsMap.has(outId)) {
+      groupsMap.set(outId, []);
+    }
+    groupsMap.get(outId).push(recipe);
+  }
+
+  return Array.from(groupsMap.entries()).map(([primaryOutputId, recipes]) => {
+    const craftable = recipes.filter(canCraftOne);
+    // When multiple variants are craftable (e.g., Ore vs Nuggets), prefer more efficient later-age/ore variant.
+    const preferredCraftable =
+      craftable.find((r) => Object.keys(r.inputs).some((id) => id.endsWith('_ore'))) ?? craftable[0];
+
+    const activeRecipe = preferredCraftable ?? recipes[0];
+    return {
+      primaryOutputId,
+      outputName: RESOURCES[primaryOutputId]?.name ?? activeRecipe.name,
+      recipes,
+      activeRecipe,
+      hasAnyCraftable: craftable.length > 0,
+    };
+  });
 }

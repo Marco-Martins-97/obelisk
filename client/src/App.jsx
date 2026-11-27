@@ -56,6 +56,26 @@ function loadSandboxConfig() {
   }
 }
 
+/** Loads previously abandoned Continent coordinates persisted under `key`. */
+function loadAbandonedVillages(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Saves abandoned Continent coordinates cleanly under `key`. */
+function saveAbandonedVillages(key, list) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(list));
+  } catch {
+    // Ignore quota or disabled storage cleanly.
+  }
+}
+
 /**
  * Shared playable Stone Age workspace parameterized for either Online (`/`) or Sandbox (`/sandbox`).
  * Online hides all dev telemetry and tile info (`coordsOnlyTooltip`), whereas Sandbox mounts
@@ -97,6 +117,8 @@ function PlayableVillageWorkspace({
   hoveredSubTile,
   onHoverSubTile,
   onSelectContinentTile,
+  abandonedCoords = [],
+  onStartNewVillage = null,
   topControls = null,
 }) {
   const isOnline = mode === 'online';
@@ -121,6 +143,9 @@ function PlayableVillageWorkspace({
 
   const menuTile = tileMenu
     ? territory.tiles[tileMenu.y * territory.size + tileMenu.x]
+    : null;
+  const buildingOnMenuTile = tileMenu
+    ? (village.state.buildings.find((b) => b.x === tileMenu.x && b.y === tileMenu.y) ?? null)
     : null;
   const menuBuildingOptions = tileMenu
     ? village.evaluateBuildingOptions(tileMenu.x, tileMenu.y)
@@ -160,6 +185,16 @@ function PlayableVillageWorkspace({
           spawnTile={spawnTile}
           onOpenBuilding={(b) => setSelectedBuildingId(b.instanceId)}
           onOpenModal={setActiveHudModal}
+          onStartNewVillage={
+            onStartNewVillage
+              ? () => {
+                  setSelectedBuildingId(null);
+                  setTileMenu(null);
+                  setActiveHudModal(null);
+                  onStartNewVillage(spawnTile);
+                }
+              : null
+          }
         />
       </div>
 
@@ -188,7 +223,7 @@ function PlayableVillageWorkspace({
             />
           ) : (
             <ContinentCanvas
-              key={`${mode}-continent-${continent.size}`}
+              key={`${mode}-continent-${continent.size}-${spawnTile.x}-${spawnTile.y}`}
               continent={continent}
               viewMode={isOnline ? 'gameplay' : viewMode}
               devLayer={devLayer}
@@ -198,6 +233,7 @@ function PlayableVillageWorkspace({
               showFog={isOnline || showFog}
               coordsOnlyTooltip={isOnline}
               villageCoords={spawnTile}
+              abandonedCoords={abandonedCoords}
               selectedCoords={{ x: selectedTile.x, y: selectedTile.y }}
               onSelectTile={onSelectContinentTile}
               onOpenTileMenu={(payload) => setContinentMenuTile(payload.tile)}
@@ -223,6 +259,9 @@ function PlayableVillageWorkspace({
         <TileActionMenu
           menuState={{ ...tileMenu, tile: menuTile }}
           buildingOptions={menuBuildingOptions}
+          buildingOnTile={buildingOnMenuTile}
+          villageState={village.state}
+          speedFactor={village.effectiveSpeedFactor}
           inventory={village.state.inventory}
           freeUnits={village.freeUnits}
           isExplored={menuIsExplored}
@@ -236,6 +275,20 @@ function PlayableVillageWorkspace({
             village.startBuildBuilding({ buildingId, x: tileMenu.x, y: tileMenu.y })
           }
           onProspect={() => village.prospectTile({ x: tileMenu.x, y: tileMenu.y })}
+          onOpenBuilding={(b) => setSelectedBuildingId(b.instanceId)}
+          onRepairBuilding={village.repairBuilding}
+          onRepairAllBuildings={village.repairAllBuildings}
+          onUpgradeBuilding={village.startUpgradeBuilding}
+          onDemolishBuilding={(instanceId) => {
+            if (selectedBuildingId === instanceId) setSelectedBuildingId(null);
+            village.demolishBuilding(instanceId);
+          }}
+          onQuickCraft={village.startCraftRecipe}
+          onQuickHarvest={({ x, y, isOrchard }) =>
+            isOrchard
+              ? village.harvestOrchardAction({ x, y })
+              : village.harvestCropPlotAction({ x, y })
+          }
         />
       )}
 
@@ -249,11 +302,18 @@ function PlayableVillageWorkspace({
         freeUnits={village.freeUnits}
         onClose={() => setSelectedBuildingId(null)}
         onTrainUnit={village.trainUnit}
+        onDismissUnit={village.dismissUnit}
         onUpgradeBuilding={village.startUpgradeBuilding}
         onUpgradeBuildingTier={village.startUpgradeBuildingTier}
         onChangeMainTier={village.changeMainTier}
         onStartCraft={village.startCraftRecipe}
         onStartResearch={village.startResearchTech}
+        onRepairBuilding={village.repairBuilding}
+        onRepairAllBuildings={village.repairAllBuildings}
+        onDemolishBuilding={(instanceId) => {
+          setSelectedBuildingId(null);
+          village.demolishBuilding(instanceId);
+        }}
       />
 
       <ContinentExpeditionModal
@@ -292,15 +352,34 @@ function PlayableVillageWorkspace({
  */
 function OnlinePage() {
   const seed = 'obelisk-alpha';
+  const abandonedKey = `obelisk_abandoned_online_${seed}_v1`;
+  const [abandonedVillages, setAbandonedVillages] = useState(() =>
+    loadAbandonedVillages(abandonedKey),
+  );
   const continent = useMemo(
     () => generateContinent(seed, { size: DEFAULT_CONTINENT_SIZE }),
     [seed],
   );
-  const spawnTile = useMemo(() => pickStarterSpawnTile(continent, seed), [continent, seed]);
+  const spawnSeed =
+    abandonedVillages.length === 0 ? seed : `${seed}:relocate:${abandonedVillages.length}`;
+  const spawnTile = useMemo(
+    () => pickStarterSpawnTile(continent, spawnSeed, abandonedVillages),
+    [continent, spawnSeed, abandonedVillages],
+  );
   const territory = useMemo(() => {
     const context = getWorldTileContext(continent, spawnTile.x, spawnTile.y);
     return generateTerritory(spawnTile.tileSeed, context, { size: DEFAULT_TERRITORY_SIZE });
   }, [continent, spawnTile]);
+
+  const handleStartNewVillage = (prevCoords) => {
+    const nextAbandoned = abandonedVillages.some(
+      (c) => c.x === prevCoords.x && c.y === prevCoords.y,
+    )
+      ? abandonedVillages
+      : [...abandonedVillages, { x: prevCoords.x, y: prevCoords.y }];
+    saveAbandonedVillages(abandonedKey, nextAbandoned);
+    setAbandonedVillages(nextAbandoned);
+  };
 
   return (
     <PlayableVillageWorkspace
@@ -320,6 +399,8 @@ function OnlinePage() {
       showFog
       hoveredSubTile={null}
       onHoverSubTile={() => {}}
+      abandonedCoords={abandonedVillages}
+      onStartNewVillage={handleStartNewVillage}
     />
   );
 }
@@ -334,6 +415,9 @@ function SandboxPage() {
   const [config, setConfig] = useState(loadSandboxConfig);
   const [selectedCoords, setSelectedCoords] = useState(null);
   const [hoveredSubTile, setHoveredSubTile] = useState(null);
+  const sandboxAbandonedKey = `obelisk_abandoned_sandbox_${config.seed}_v1`;
+  const [abandonedMap, setAbandonedMap] = useState({});
+  const abandonedVillages = abandonedMap[sandboxAbandonedKey] ?? loadAbandonedVillages(sandboxAbandonedKey);
 
   useEffect(() => {
     try {
@@ -348,9 +432,25 @@ function SandboxPage() {
     [config.seed, config.continentSize],
   );
   const spawnTile = useMemo(
-    () => pickStarterSpawnTile(continent, config.seed),
-    [continent, config.seed],
+    () => pickStarterSpawnTile(continent, config.seed, abandonedVillages),
+    [continent, config.seed, abandonedVillages],
   );
+
+  const handleStartNewVillage = (prevCoords) => {
+    const nextAbandoned = abandonedVillages.some(
+      (c) => c.x === prevCoords.x && c.y === prevCoords.y,
+    )
+      ? abandonedVillages
+      : [...abandonedVillages, { x: prevCoords.x, y: prevCoords.y }];
+    saveAbandonedVillages(sandboxAbandonedKey, nextAbandoned);
+    setAbandonedMap((prev) => ({ ...prev, [sandboxAbandonedKey]: nextAbandoned }));
+    const nextSpawn = pickStarterSpawnTile(
+      continent,
+      `${config.seed}:relocate:${nextAbandoned.length}`,
+      nextAbandoned,
+    );
+    setSelectedCoords({ x: nextSpawn.x, y: nextSpawn.y });
+  };
 
   const activeCoords =
     selectedCoords &&
@@ -433,6 +533,8 @@ function SandboxPage() {
       hoveredSubTile={hoveredSubTile}
       onHoverSubTile={setHoveredSubTile}
       onSelectContinentTile={setSelectedCoords}
+      abandonedCoords={abandonedVillages}
+      onStartNewVillage={handleStartNewVillage}
       topControls={controls}
     />
   );

@@ -6,7 +6,11 @@ import { MemoryRouter } from 'react-router';
 import { REAL_MS_PER_INGAME_HOUR } from '@obelisk/shared';
 import BuildingModal from './components/BuildingModal.jsx';
 import { AppRoutes } from './App.jsx';
-import { formatRealConclusionTimeHMS, formatRealDurationHMS } from './utils/timeFormat.js';
+import {
+  formatRealConclusionTimeHMS,
+  formatRealDurationHMS,
+  formatRealHoursHMS,
+} from './utils/timeFormat.js';
 
 describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action Menu', () => {
   beforeEach(() => {
@@ -191,16 +195,22 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
 
     expect(screen.getByText('Upgrade to Level 2')).toBeInTheDocument();
     expect(screen.getByText(/Improves:.*\+10 Max Pop/i)).toBeInTheDocument();
-    expect(screen.getByText('10 Straw')).toHaveClass('text-rose-400');
-    expect(screen.getByText('10 Pelts')).toHaveClass('text-slate-300');
+    expect(screen.getByText('0/10 Straw')).toHaveClass('text-rose-400');
+    expect(screen.getByText('10/10 Pelts')).toHaveClass('text-slate-300');
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeDisabled();
+    expect(screen.getByText('8/1 Sticks')).toHaveClass('text-slate-300');
 
     const trainButtons = screen.getAllByRole('button', { name: 'Train +1' });
     fireEvent.click(trainButtons[0]); // Gatherer #1
     fireEvent.click(trainButtons[0]); // Gatherer #2
-    fireEvent.click(trainButtons[1]); // Hunter #1
+    fireEvent.click(trainButtons[1]); // Hunter #1 (1 Stick)
     fireEvent.click(trainButtons[2]); // Builder #1
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    // Right-clicking placed Main building (12, 12) opens the Building Quick Action Menu.
+    fireEvent.contextMenu(territoryCanvas, { clientX: 336, clientY: 336 });
+    expect(screen.getByRole('menuitem', { name: /Open Main Village Hall/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close action menu' }));
 
     // Right-click explored adjacent tile (13, 12) -> verify 0/All buttons, Build statuses & [Team >].
     fireEvent.contextMenu(territoryCanvas, { clientX: 408, clientY: 336 });
@@ -229,7 +239,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
 
     // Missing House resources (4 Straw) highlight in red inside the inspected footer.
     fireEvent.mouseEnter(houseBtn);
-    expect(screen.getByText('4 Straw')).toHaveClass('text-rose-400');
+    expect(screen.getByText('0/4 Straw')).toHaveClass('text-rose-400');
 
     // Open [Team >], click All on gatherers -> 2G + 1H, Send Team -> h:m:s + Traveling phase.
     fireEvent.click(screen.getByRole('menuitem', { name: /Team/i }));
@@ -305,8 +315,8 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeDisabled();
 
     // Missing Fish for Cook Fish appears in red (rose-400), while Salt waterCost appears neutral.
-    expect(screen.getByText('1 Raw Fish')).toHaveClass('text-rose-400');
-    expect(screen.getByText('10 Water Bowls')).toHaveClass('text-slate-300');
+    expect(screen.getByText('0/1 Raw Fish')).toHaveClass('text-rose-400');
+    expect(screen.getByText('10/10 Water Bowls')).toHaveClass('text-slate-300');
 
     // Cook Meat takes 1 meat + 1 stick; with 3 meat and 5 sticks, Max sets quantity = 3.
     fireEvent.click(screen.getByRole('button', { name: 'Max quantity for Cook Meat' }));
@@ -320,5 +330,214 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
       recipeId: 'cook_meat',
       quantity: 3,
     });
+  });
+
+  it('supports grouped single Craft buttons, [Research]->Craft replacement, Researched dropdown, Repair & Destroy in BuildingModal', () => {
+    const onStartCraft = vi.fn();
+    const onRepairBuilding = vi.fn();
+    const onDemolishBuilding = vi.fn();
+    const kiln = {
+      instanceId: 'kiln-1',
+      buildingId: 'kiln',
+      x: 13,
+      y: 12,
+      tier: 2,
+      level: 1,
+      status: 'active',
+      condition: 75,
+      graceDaysRemaining: 0,
+    };
+    const state = {
+      virtualTimeMs: 1000,
+      inventory: {
+        sticks: 20,
+        small_stones: 20,
+        clay: 20,
+        straw: 20,
+        copper_ore: 10,
+        copper_nugget: 20,
+        charcoal: 5,
+      },
+      water: 10,
+      unlockedTechs: ['wood_tools', 'stone_tools', 'clay_vessels'],
+      craftedCounts: {},
+      buildings: [
+        { instanceId: 'main-0', buildingId: 'main', x: 12, y: 12, tier: 2, level: 1, status: 'active' },
+        kiln,
+      ],
+      units: { gatherer: 0, hunter: 0, builder: 1 },
+      tasks: [],
+    };
+
+    render(
+      <BuildingModal
+        building={kiln}
+        state={state}
+        village={null}
+        territory={null}
+        maxPop={10}
+        popUsed={1}
+        freeUnits={{ gatherer: 0, hunter: 0, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={onStartCraft}
+        onStartResearch={vi.fn()}
+        onRepairBuilding={onRepairBuilding}
+        onDemolishBuilding={onDemolishBuilding}
+      />,
+    );
+
+    // clay_vessels was researched -> no Research header shown; Craft Clay Vessel is active instead.
+    expect(screen.queryByRole('heading', { name: 'Technology Research' })).not.toBeInTheDocument();
+    expect(screen.getByText('Craft Clay Vessel')).toBeInTheDocument();
+
+    // Copper Ingot has 2 recipes (Ore + Nuggets) grouped under ONE Craft button defaulting to Ore.
+    expect(screen.getAllByText('Copper Ingot')).toHaveLength(1);
+    const viaNuggets = screen.getAllByRole('button', { name: 'via Nuggets' })[0];
+    const craftBtns = screen.getAllByRole('button', { name: 'Craft' });
+    // craftBtns order: [0] charcoal, [1] clay_vessel, [2] copper_ingot, [3] bronze_ingot
+    fireEvent.click(craftBtns[2]);
+    expect(onStartCraft).toHaveBeenCalledWith({
+      buildingInstanceId: 'kiln-1',
+      recipeId: 'smelt_copper_ore',
+      quantity: 1,
+    });
+
+    fireEvent.click(viaNuggets);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Craft' })[2]);
+    expect(onStartCraft).toHaveBeenCalledWith({
+      buildingInstanceId: 'kiln-1',
+      recipeId: 'smelt_copper_ingot',
+      quantity: 1,
+    });
+
+    // Repair button restores condition 75% -> 100%, Destroy Building requires confirmation.
+    expect(screen.getByText('Condition: 75%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Repair' }));
+    expect(onRepairBuilding).toHaveBeenCalledWith('kiln-1');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Destroy Building' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Destroy' }));
+    expect(onDemolishBuilding).toHaveBeenCalledWith('kiln-1');
+  });
+
+  it('displays craft and upgrade timers in real time (HH:MM:SS) and supports dispensing idle units', () => {
+    expect(formatRealHoursHMS(1, 6, 0)).toBe(formatRealDurationHMS(REAL_MS_PER_INGAME_HOUR, 6));
+    expect(formatRealHoursHMS(1, 6, 0.5)).toBe(
+      formatRealDurationHMS(REAL_MS_PER_INGAME_HOUR * 2, 6),
+    );
+    expect(formatRealHoursHMS(1, 60, 0)).toBe(
+      formatRealDurationHMS(REAL_MS_PER_INGAME_HOUR, 60),
+    );
+
+    const onDismissUnit = vi.fn();
+    const firepit = {
+      instanceId: 'fp-rt',
+      buildingId: 'firepit',
+      x: 13,
+      y: 12,
+      tier: 1,
+      level: 1,
+      status: 'active',
+    };
+    const mockState = {
+      virtualTimeMs: 1000,
+      speedFactor: 6,
+      efficiencyPenalty: 0,
+      inventory: { sticks: 10, meat: 3, small_stones: 20 },
+      water: 10,
+      unlockedTechs: ['wood_tools'],
+      craftedCounts: {},
+      buildings: [
+        { instanceId: 'main-0', buildingId: 'main', x: 12, y: 12, tier: 1, level: 1, status: 'active' },
+        firepit,
+      ],
+      units: { gatherer: 2, hunter: 1, builder: 1 },
+      tasks: [
+        {
+          id: 'upg-rt',
+          kind: 'upgrade',
+          buildingId: 'firepit',
+          instanceId: 'fp-rt',
+          completedAtMs: 5000,
+          returnsAtMs: 6000,
+        },
+      ],
+    };
+
+    const { rerender } = render(
+      <BuildingModal
+        building={firepit}
+        state={mockState}
+        village={null}
+        territory={null}
+        maxPop={10}
+        popUsed={4}
+        freeUnits={{ gatherer: 1, hunter: 0, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onDismissUnit={onDismissUnit}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    // Firepit live upgrade timer & static craft/upgrade durations render in real-time HH:MM:SS.
+    expect(screen.getByText(/Completion in:\s*00:00:04/)).toBeInTheDocument();
+    expect(screen.getByText(/Builder returns to Main in:\s*00:00:05/)).toBeInTheDocument();
+    expect(screen.getAllByText(/\(\d{2}:\d{2}:\d{2}\)/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/\(\d+(\.\d+)?h\)/)).not.toBeInTheDocument();
+
+    // Switch to Main to test Train Units Dispense -1 (idle gatherer enabled, busy hunter disabled).
+    rerender(
+      <BuildingModal
+        building={mockState.buildings[0]}
+        state={mockState}
+        village={null}
+        territory={null}
+        maxPop={10}
+        popUsed={4}
+        freeUnits={{ gatherer: 1, hunter: 0, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onDismissUnit={onDismissUnit}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dispense 1 Gatherer' }));
+    expect(onDismissUnit).toHaveBeenCalledWith('gatherer');
+    expect(screen.getByRole('button', { name: 'Dispense 1 Hunter' })).toBeDisabled();
+  });
+
+  it('dispenses idle units in live Sandbox HUD and decrements population usage', () => {
+    render(
+      <MemoryRouter initialEntries={['/sandbox']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+
+    const territoryCanvas = screen.getByLabelText('Territory Map Canvas');
+    fireEvent.mouseDown(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
+    fireEvent.mouseUp(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
+
+    const trainButtons = screen.getAllByRole('button', { name: 'Train +1' });
+    fireEvent.click(trainButtons[0]); // Gatherer -> 1/10 pop
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByText('1/10')).toBeInTheDocument();
+
+    // Dispense directly from the top-right Units HUD card.
+    fireEvent.click(screen.getByRole('button', { name: 'Dispense 1 Gatherer' }));
+    expect(screen.getByText('0/10')).toBeInTheDocument();
   });
 });
