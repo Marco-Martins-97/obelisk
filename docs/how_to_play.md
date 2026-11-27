@@ -1,4 +1,4 @@
-# How to Play Obelisk (Stone Age Guide)
+# How to Play Obelisk (Stone & Copper Age Guide)
 
 > **Desktop Browser Notice:** Obelisk is built for Desktop web browsers (left/right-click canvas actions, hover tooltips, scroll-wheel zoom). Mobile/phone touch browsers are not fully supported.
 
@@ -10,27 +10,28 @@ You begin at **(12, 12)** inside your `25×25` Territory with:
 
 ---
 
-## 2. Training Units & Dispatching Missions
-1. **Train Units:** Left-click **Main Village Hall** (or click **Open Main Hall** in the header bar) to train **Gatherers** (`5 km/h`), **Hunters** (`6 km/h`), and **Builders** (`4 km/h`).
-2. **Send Squads or Mixed Teams:** Right-click any explored tile:
+## 2. Training, Dispensing Units & Dispatching Missions
+1. **Train & Dispense Units:** Left-click **Main Village Hall** (or click **Open Main Hall**) to train **Gatherers** (`5 km/h`, Free), **Hunters** (`6 km/h`, `1 Stick` -> `1 Stick + 1 Small Stone` after `Stone Tools`), and **Builders** (`4 km/h`, Free). Idle units can be freed anytime via **Dispense -1** in Main Hall or **`-1`** in the right-sidebar **Units** panel.
+2. **Send Squads or Mixed Teams:** Right-click any explored empty tile:
    - **Gather:**
      - *Fields:* Small Stones, Wild Roots, Straw.
      - *Forest:* Sticks, Berries.
-     - *Water (River / Lake):* Clay and Gold/Silver/Copper/Tin/Nickel/Iron/Gems **Ore Nuggets** (rare panning!).
-   - **Hunt:** *Forest* → Raw Meat & Pelts; *Fields* → Wild Grain; *Water* → Raw Fish.
-   - **Collect Water:** On any Water tile, Gatherers or Hunters bring back `1 jar` (`10` water bowls) per unit (up to your Main water capacity).
+     - *Water (River / Lake):* Clay and **Ore Nuggets** from non-flux/coal/salt veins (`copper`, `iron`, `tin`, `nickel`, `silver`, `gold`, `gems`).
+   - **Hunt:** *Forest* → Raw Meat, Pelts & Bones; *Fields* → Wild Grain; *Water* → Raw Fish.
+   - **Forest Predators:** Working in Forests carries a small chance of **Wolf** (`10%`) or **Bear** (`4%`) encounters — unescorted Gatherers risk losses, while Hunters slay predators for extra Meat, Bones, and Pelts.
+   - **Collect Water:** On Water tiles, Gatherers or Hunters bring back `1 jar` (`10` water bowls) per unit up to Main water capacity.
    - **Team (>):** Mix Gatherers, Hunters, and Water haulers in one trip moving at the slowest member's speed.
-3. **Fog Exploration:** Completing a round-trip mission or construction reveals a `3×3` ring around that tile. Exploring all `625` Territory tiles unlocks the surrounding `3×3` Continent tiles.
+3. **Fog Exploration:** Returning teams/builders reveal a `3×3` box around that tile; exploring all `625` tiles unlocks the surrounding `3×3` Continent tiles.
 
 ---
 
-## 3. Food, Water, Spoilage & Preservation
-- **Daily Survival Rate:** Every in-game day (`4` real hours at `6×` Offline speed), active units and staffed building workers (`Pop Used`) automatically eat **`1 food + 1 water bowl` per pop**.
-- **Auto-Eating (`FEFO`):** Edible food in storage is consumed **fastest-spoiling first** (`Berries`/`Cooked Fish` `25%/d` → `Cooked Meat` `20%/d` → `Dried Fish` `6%/d` → `Dried Meat` `5%/d` → `Wild Grain` `3%/d` → `Salted Fish`/`Salted Meat` `1%/d`). Multi-ration meals keep leftover fractions across days (`foodCarry`).
-- **Fractional Spoilage (`S1`):** Leftover food decays daily by type, carrying partial spoilage across days (`spoilageCarry`) so small stacks do not vanish instantly on day 1.
-- **Preservation Workflow:**
-  - Build a **Firepit** (`4` Sticks, `3` Small Stones) to cook Raw Meat (`3` food) & Raw Fish (`2` food), and use **Boil Salt** (`2` Sticks + `10` Water Bowls → `2` Salt).
-  - Build a **Drying Rack** (requires `Stone Tools`, basic materials: `5` Sticks, `2` Pelts, `2` Straw) to air-dry (`5–6%/d` spoil) or salt-cure (`1%/d` spoil, `+1` food bonus) meat and fish.
+## 3. Food, Water, Baskets, Vessels & Spoilage
+- **Daily Survival Rate:** Every in-game day (`4` real hours at `6×` Offline speed), `Pop Used` eats **`1 food + 1 water bowl` per pop**.
+- **Auto-Eating (`FEFO`) & Spoilage:** Edible inventory is consumed **fastest-spoiling first**, preserving leftover fractions in `foodCarry` while leftovers decay fractionally (`spoilageCarry`).
+- **Preservation & Storage Unlocks (`[Research] -> [Craft]`):**
+  - Build a **Firepit** (`4` Sticks, `3` Small Stones) to cook Meat/Fish, boil **Salt**, crush **Bone Meal** (`P`), burn **Wood Ash** (`K`), and research **Woven Baskets** -> craft `+15` general storage bulk each.
+  - Build a **Drying Rack** (`Stone Tools`) to dry or salt-cure rations (`1%/d` spoil).
+  - Build a **Clay Kiln** (`Stone Tools`) to burn Charcoal (`+Wood Ash`), craft **Clay Vessels** (`+10` water bowls & `+20` preserved food capacity at `0.7×` spoil), and smelt Ore/Nuggets (`via Ore` / `via Nuggets` under 1 `Craft` button) into Copper/Bronze Ingots.
 
 ---
 
@@ -52,14 +53,15 @@ Running short on food or water triggers sequential daily debuffs:
 ---
 
 ## 6. Copper Age Progression (Tier 2+)
-1. **Smithy & 6 Specialized Tools:** Once Main reaches Tier 2, build a **Smithy** (`8` Sticks, `6` Small Stones, `4` Clay, `2` Pelts) and research **`Stone Axe`**, **`Bone Pickaxe`** (from hunted Bones), **`Stone Hoe`**, **`Stone Spear`**, **`Stone Shovel`**, and **`Stone Hammer`** — then upgrade them with **Copper Ingots**.
-2. **Prospecting & Continuous Production:** Train **Prospectors** at Main and right-click explored tiles (`Prospect Tile` → `View Prospection Report`) before placing **Mines** (extract all hosted ores by density), **Timber Camps** (forest tiles), **Quarries**, **Clay Pits** (near water), and **Wells**.
-3. **Farming, Orchards & Animal Pens:** Build a **Farmstead** to guard Grain & Wild Roots and unlock adjacent **Crop Fields** (plant in Spring, manage TFC soil nutrients A/B/C with **Manure**), **Orchards** (plant **Saplings**, harvest Apples in Summer/Autumn after 1 year), and **Animal Pens** (Hunters with Stone Spear capture Horses, Donkeys, Goats, Sheep, and Chickens).
-4. **Markets, Walls & Continent Expeditions:** Build internal **City Walls** inside Main, trade 1:1 at the **Market** (`Caravan` = `1 Donkey + 1 Pop`), train **Scouts** (`1 Horse + 1 Pop`) at **Expedition Outpost**, right-click the **Continent Map** to launch distance-scaled expeditions (include a Caravan to haul resources back), and smelt **Bronze Ingots** at the Kiln for the **Bronze Age**.
+1. **Smithy & 6 Specialized Tools:** Once Main reaches Tier 2, build a **Smithy** (`8` Sticks, `6` Small Stones, `4` Clay, `2` Pelts) and research **`Stone Axe`**, **`Bone Pickaxe`**, **`Stone Hoe`**, **`Stone Spear`**, **`Stone Shovel`**, and **`Stone Hammer`** — then upgrade them with **Copper Ingots** (`Researched Technologies` move to a collapsible bottom dropdown).
+2. **Prospecting & Continuous Production:** Train **Prospectors** at Main and right-click explored tiles (`Prospect Tile` → `View Prospection Report`) before placing **Mines**, **Timber Camps** (forest tiles), **Quarries**, **Clay Pits** (near water), and moisture-scaled **Wells**.
+3. **N/P/K Farming, Orchards & Animal Slaughter:** Build a **Farmstead** to guard Grain & Wild Roots and attach **Crop Fields** (plant in Spring; restore Nitrogen **N** with **Manure**, Phosphorus **P** with **Bone Meal**, Potassium **K** with **Wood Ash**), **Orchards** (`Saplings`), and **Animal Pens** (Hunters capture Horses, Donkeys, Goats, Sheep, Chickens; click **`Kill -1`** to butcher Meat, Bones & Pelts).
+4. **Building Degradation, Quick Menus & Relocation:** Buildings start with a `3`-day buffer before losing `2%/day` (`4%/day` in Winter; reduced up to `80%` by internal **City Walls**). Right-click any placed building for **Quick Actions** (`Open`, `Repair`, `Quick Harvest`, `Quick Craft`, `Upgrade`, `Destroy Building`) or use **Repair All** in Main Hall. Average condition `< 20%` abandons the village — click **Start New Village** to start fresh elsewhere while leaving an `Abandoned` marker on the Continent.
+5. **Markets & Continent Expeditions:** Trade 1:1 at the **Market** (`Caravan` = `1 Donkey + 1 Pop`), train **Scouts** (`1 Horse + 1 Pop`) at **Expedition Outpost**, right-click the **Continent Map** to dispatch distance-scaled expeditions, and smelt **Bronze Ingots** at the Kiln to unlock the **Bronze Age**.
 
 ---
 
-## 7. HUD Modals, Crafting & Sandbox Controls
+## 7. HUD Modals, Real-Time Timers & Sandbox Controls
 - **Header Modals:** Open **Stockpile**, **Technologies**, and **Village Log** from the status header bar. Inside **Stockpile**, switch category tabs (**All**, **Materials**, **Food**, **Ores**, **Ingots**) and left-click any item card to discard items.
-- **Upgrades & Batch Crafting:** Missing materials or water in Build/Crafting/Upgrade screens appear in red; active buildings remain usable during level/tier upgrades (`Upgrading...`), and crafting supports batch `-`/`+`/`Max` quantities.
+- **Real-Time Timers & Costs (`have/needed`):** All crafting, research, build, and upgrade timers display wall-clock `HH:MM:SS` durations adjusted by speed & starvation penalty; missing materials appear in red (`0/10 Straw`).
 - **Sandbox (`/sandbox`):** Includes Dev map layers plus **Unlock Map**, **Unlock Continent**, **`+1 Day` / `+1 Month` / `+1 Year`** time jumps, and an **Add Resource** tool.

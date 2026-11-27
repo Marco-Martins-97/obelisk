@@ -34,24 +34,29 @@ Round-trip timed action (`outbound + hunt + return`) with probabilistic yields:
 | **Water (Lake / River / Spring)** | `fish` |
 
 ### Stone Age Crafted Items & Age Evolution Trigger
-- **Cooked & Dried/Cured Food:**
-  - **`FIREPIT`:** Raw `meat` (`45%/d` spoil) → `cooked_meat` (`3` food, `20%/d`), raw `fish` (`50%/d` spoil) → `cooked_fish` (`2` food, `25%/d`), and **`boil_salt`** (`2 sticks + 10 water bowls` → `2 salt`, `1.0h`).
+- **Cooked, Dried/Cured Food & Fertilizers/Containers:**
+  - **`FIREPIT`:** Raw `meat` (`45%/d` spoil) → `cooked_meat` (`3` food, `20%/d`), raw `fish` (`50%/d` spoil) → `cooked_fish` (`2` food, `25%/d`), **`boil_salt`** (`2 sticks + 10 water bowls` → `2 salt`, `1.0h`), **`burn_wood_ash`** (`2 sticks` → `1 wood_ash` `[K]`), **`crush_bone_meal`** (`1 bone` → `2 bone_meal` `[P]`), and **`craft_woven_basket`** (after `basket_weaving`: `+15` general storage bulk each).
   - **`DRYING_RACK` (requires `stone_tools`):** Air-dried `dried_meat` (`3` food, `5%/d`), `dried_fish` (`2` food, `6%/d`), and salt-cured `salted_meat` (`4` food, `1%/d`), `salted_fish` (`3` food, `1%/d`).
+  - **`KILN`:** Charcoal (`+wood_ash`), **`craft_clay_vessel`** (after `clay_vessels`: `+10` water bowls & `+20` preserved food capacity at `0.7×` spoilage each), and Ore/Nugget smelting (`1 craft button` per ingot output).
 - **Salt Acquisition (`Salt-A`):** Boiled from water at a Stone Age **`FIREPIT`** and mined later in the Copper Age from `limestone` and `shale` ore veins (never dropped from river panning).
+- **Unit Training Costs & Dismissal:** `Gatherer` & `Builder` are free (`{}`); `Hunter` costs `1 stick` (`1 stick + 1 small_stone` once `stone_tools` unlocks); `Prospector`, `Scout`, and `Caravan` consume configured material/livestock costs. Idle units can be dismissed anytime via `dismissUnit` (`Dispense -1` / `-1`).
+- **Forest Predator Encounters:** Forest operations roll `Wolf` (`10%`) or `Bear` (`4%`) encounters — unescorted Gatherers risk 1 death, while Hunters slay predators for bonus `meat`, `bones`, and `pelts`.
 - **Fuel:** `sticks` and `charcoal` (crafted at the **`KILN`**).
-- **Copper Age Evolution Trigger:** Smelt **`10 copper_nuggets` + `2 charcoal` → `1 copper_ingot`** in the **`KILN`** (`unlocksTech: 'copper_age'`), unlocking the Tier 2 upgrade on `MAIN` using normal materials.
+- **Copper Age Evolution Trigger:** Smelt **`10 copper_nuggets` + `2 charcoal` → `1 copper_ingot`** (or smelt mined Ore) in the **`KILN`** (`unlocksTech: 'copper_age'`, passive unlock), unlocking the Tier 2 upgrade on `MAIN` using normal materials.
 
 ### 2.4 Technology Tree (`/shared/config/technologies.js`)
-Tools are **permanent, player-persistent technologies** rather than physical storage items. All workers automatically apply the highest unlocked tool tier (`getBestUnlockedTool`), and newly claimed villages retain previously unlocked technologies:
+Tools are **permanent, player-persistent technologies** rather than physical storage items (`researchMode`: `'starter' | 'passive' | 'research'`), auto-applying `getBestUnlockedTool` and moving completed researches out of active research lists:
 
-| Tech Node | Tier / Type | Trigger to Unlock Branch | Research Cost & Time | Modifiers & Unlocks |
+| Tech Node | Tier / Mode | Trigger to Unlock Branch | Research Cost & Time | Modifiers & Unlocks |
 | :--- | :--- | :--- | :--- | :--- |
-| **`wood_tools`** | T1 General | Unlocked at spawn (`starter`) | Free (starter tech) | `1.0×` work speed, `0` loot bonus |
-| **`stone_tools`** | T2 General | Build **`1 FIREPIT`** | At `FIREPIT`: `{ small_stones: 3, sticks: 2 }`, `1.0h` | **`+20%`** gather/hunt work speed (`1.2×`), **`+1`** max loot, **`-50%`** empty roll weight (`0.5×`), unlocks **`KILN`** |
-| **`copper_age`** | T2 Age | Craft **`1 copper_ingot`** at `KILN` | Unlocks `MAIN` Tier 2 + **`SMITHY`** | Upgrades `MAIN` to Copper Age (`Tier 2`) |
-| **`stone_axe`..`stone_hammer`** | T2 Specialized | Build **`SMITHY`** | Researched at `SMITHY` (`bones` + `sticks`/`small_stones`) | Unlocks Copper Age production, farming, wells, granaries, walls, markets, outposts |
-| **`copper_axe`..`copper_hammer`** | T3 Copper Tools | Prerequisite `stone_*`/`bone_*` tool | `{ copper_ingot: 1, sticks: 2 }` at `SMITHY` | **`+35%`** specialized production/work speed & `+1` bonus |
-| **`bronze_age`** | T3 Age | Smelt **`1 bronze_ingot`** at `KILN` | Unlocks `MAIN` Tier 3 | Upgrades `MAIN` to Bronze Age (`Tier 3`) |
+| **`wood_tools`** | T1 Starter | Unlocked at spawn (`starter`) | Free (starter tech) | `1.0×` work speed, `0` loot bonus |
+| **`stone_tools`** | T2 Research | Build **`1 FIREPIT`** | At `FIREPIT`: `{ small_stones: 3, sticks: 2 }`, `1.0h` | **`+20%`** work speed, **`+1`** max loot, **`-50%`** empty weight, unlocks **`KILN`** |
+| **`basket_weaving`** | T1 Research | Build **`1 FIREPIT`** | At `FIREPIT`: `{ sticks: 4, straw: 3 }`, `0.8h` | `[Research] -> [Craft]` `woven_basket` (`+15` general storage bulk each) |
+| **`clay_vessels`** | T2 Research | Build **`1 KILN`** | At `KILN`: `{ clay: 4, sticks: 2 }`, `1.0h` | `[Research] -> [Craft]` `clay_vessel` (`+10` water cap & `+20` preserved food cap) |
+| **`copper_age`** | T2 Passive | Craft **`1 copper_ingot`** at `KILN` | Automatic passive unlock | Upgrades `MAIN` to Tier 2 + unlocks **`SMITHY`** |
+| **`stone_axe`..`stone_hammer`** | T2 Research | Build **`SMITHY`** | At `SMITHY` (`bones` + `sticks`/`small_stones`) | Unlocks Copper Age extraction, `N/P/K` farming, wells, granaries, walls, markets, outposts |
+| **`copper_axe`..`copper_hammer`** | T3 Research | Prerequisite `stone_*`/`bone_*` tool | `{ copper_ingot: 1, sticks: 2 }` at `SMITHY` | **`+35%`** specialized production/work speed & `+1` bonus |
+| **`bronze_age`** | T3 Passive | Smelt **`1 bronze_ingot`** at `KILN` | Automatic passive unlock | Upgrades `MAIN` to Bronze Age (`Tier 3`) |
 
 ---
 

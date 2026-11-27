@@ -2,7 +2,7 @@
 
 > **An asynchronous, browser-based MMORTS** combining *Tribal Wars*-style world exploration and marketplace trading with *TerraFirmaCraft*-inspired geological scarcity, prospecting, and seasonal survival.
 
-**Current Version:** `v0.3.0` *(Stages 0–3 Complete — Stone Age Survival, Storage Pooling, Drying/Salt, Debuffs, Offline 6× Mode & Guide)*  
+**Current Version:** `v0.4.0` *(Stages 0–4 Complete — Stone & Copper Age Vertical Slices, Degradation & Repair, N/P/K Farming, Vessels/Baskets, Combat Encounters, Real-Time `HH:MM:SS` Timers & Unit Dismissal)*  
 **Platform Note:** Built for **Desktop web browsers** (left/right-click context menus, tile hover tooltips, and scroll-wheel map zoom); some interactions do not work on phones or small touch screens yet.  
 **Tech Stack:** React 19 · React Router 8 · Vite 8 · Tailwind CSS v4 · Pure ES6+ ESM Workspaces · Vitest · ESLint *(Backend Stage 5+: Node.js, Express, MongoDB, Socket.io, BullMQ)*
 
@@ -36,13 +36,17 @@
   - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, water, forest canopies, placed buildings (`BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
   - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and dynamic per-ore layers), `10×` local contrast amplification on Territory gradients, an **Unbuildable (60% Red)** overlay toggle, and hex `tileSeed` inspection.
 
-### 5. Stone Age Playable Loop, Survival, Storage & Offline Mode (`/shared` & `/client`)
+### 5. Stone & Copper Age Playable Loop, Survival, Storage & Offline Mode (`/shared` & `/client`)
 - **`Offline (/)` vs. `Sandbox (/sandbox)` Routes:** Sticky top `TopNavbar` (`react-router`) switches between **Offline (`/`)** (fixed `6×` simulation speed until the backend server releases, with in-game Celsius temperature and a built-in **How to Play** modal) and **Sandbox (`/sandbox`)** (`1×–3600×` speed selector, Dev overlays, **Unlock Map** / **Unlock Continent**, **`+1 Day`/`+1 Month`/`+1 Year`** time jumps, and **Add Resource** cheat controls).
-- **Sidebar Layout, Header Modals & Active-While-Upgrading UI:** Right sidebar displays **Production (`/day`) → Units (`Free / Total`) → Active Timers** (real-time `Conclusion: HH:MM:SS` wall-clock timestamps and remaining countdowns); **Stockpile** (category tabs + left-click item card menu), **Technologies**, and **Village Log** open cleanly as Header modals. Crafting supports batch quantities (`-`/`+`/`Max`), missing costs render in red (`CostInline`), upgrade cards show exact stat improvements, and buildings remain active while upgrading.
+- **Real-Time Timers (`HH:MM:SS`), Header Modals & Active-While-Upgrading UI:** Right sidebar displays **Production (`/day`) → Units (`Free / Total` with idle `-1` dismissal) → Active Timers** (`Conclusion: HH:MM:SS` wall-clock end and remaining `HH:MM:SS`), while all build/upgrade/craft/research durations also display in speed-scaled `HH:MM:SS`. **Stockpile** (category tabs + left-click item card menu), **Technologies**, and **Village Log** open as Header modals. Crafting groups multi-recipe products (`via Ore` / `via Nuggets`) under one `Craft` button with batch quantities (`-`/`+`/`Max`), `have/needed Resource` costs (`CostInline`, missing highlighted red), and active-while-upgrading buildings.
 - **Strict Fog of War:** Territory starts at `7×7` explored and Continent starts at `1` village tile; Offline hover tooltips show coordinates `(x, y)` only, expanding the `3×3` frontier once returning teams/builders arrive back at `MAIN`.
 - **`MAIN` Age Controller, Buildings & Material Split:** `MAIN` Tier (`1..5`) controls village Age, while Levels (`1..3`) scale pooled storage (`+250/lv`), population (`+10/lv`), and `MAIN` water storage (`10 / 25 / 50` bowls across Lv `1..3`). Basic structures (**Main**, **House**, **Warehouse**, **Drying Rack**) use basic materials (`sticks`, `pelts`, `straw`), while **Firepit** and **Clay Kiln** require `small_stones`.
-- **FEFO Auto-Feeding, Fractional Spoilage (`S1`), Salt (`Salt-A`) & 5-Stage Starvation Debuffs:** Active `popUsed` consumes `1 food + 1 water bowl` per day automatically in **fastest-spoiling-first (`FEFO`)** order with multi-ration `foodCarry`; leftovers accumulate per-type fractional spoilage (`spoilageCarry`). **Firepit** boils water into **Salt** (`2 sticks + 10 water bowls -> 2 salt`) for **Drying Rack** cured rations (`1–6%/d` spoil). Ration deficits progress through **Hunger I (-10%) → Hunger II (-30%) → Hunger III (-50%) → Sickness (-80%) → Death (-80% + -10% maxPop/day)** with balanced highest-pop whole-unit casualties until **Abandoned** at `0` maxPop, recovering **`+20%` efficiency** and **`+10%` maxPop/day** when fed.
-- **Player-Persistent Technology Tree ([shared/config/technologies.js](./shared/config/technologies.js)):** Tools (`wood_tools` → `stone_tools`) are researched permanently rather than stored in inventory, auto-applying `+20%` work speed, `+1` max loot, and `-50%` empty roll weight.
+- **FEFO Auto-Feeding, Fractional Spoilage (`S1`), Salt & 5-Stage Starvation Debuffs:** Active `popUsed` consumes `1 food + 1 water bowl` per day automatically in **fastest-spoiling-first (`FEFO`)** order with multi-ration `foodCarry`; leftovers accumulate per-type fractional spoilage (`spoilageCarry`). **Firepit** boils water into **Salt** (`2 sticks + 10 water bowls -> 2 salt`) for **Drying Rack** cured rations (`1–6%/d` spoil). Deficits progress through **Hunger I (-10%) → Hunger II (-30%) → Hunger III (-50%) → Sickness (-80%) → Death (-80% + -10% maxPop/day)** with balanced highest-pop whole-unit casualties until **Abandoned** at `0` maxPop, recovering **`+20%` efficiency** and **`+10%` maxPop/day** when fed.
+- **Technology Tree & Copper Age Mechanics ([shared/config/technologies.js](./shared/config/technologies.js)):** Tools (`wood_tools` → `stone_tools` → Smithy 6-branch tools `axe`, `pickaxe`, `hoe`, `spear`, `shovel`, `hammer` + Copper upgrades) persist across settlements, alongside `[Research] -> [Craft]` storage unlocks (**Woven Baskets** `+15` general bulk, **Clay Vessels** `+10` water & `+20` preserved food at `0.7×` spoilage).
+- **Copper Age Production, `N/P/K` Farming, Degradation & Encounters (`/shared/utils/copperAgeMath.js`):**
+  - **Prospecting & Continuous Deposits:** `Prospector` surveys tiles; `Mine`, `Timber Camp`, `Quarry`, `Clay Pit`, and moisture-scaled `Well` (`0.5 + 0.7×territoryMoisture + 0.3×tileMoisture`) produce daily until deposits empty or storage fills.
+  - **`N/P/K` Crop Fields, Orchards & Animal Pens:** `Farmstead` guards seeds and attaches `Crop Field` (`N` Nitrogen via `Manure`, `P` Phosphorus via `Bone Meal`, `K` Potassium via Firepit/Kiln `Wood Ash`), `Orchard`, and `Animal Pen` (Hunters capture horses/donkeys/goats/sheep/chickens; `Kill -1` butchers Meat/Bones/Pelts).
+  - **Degradation, Right-Click Quick Actions & Relocation:** Active buildings have a `3`-day grace buffer before decaying `2%/day` (`4%/day` in Winter, reduced up to `80%` by internal `City Wall`), with `Repair` / `Repair All`, right-click Building Quick Action menus (`Open`, `Repair`, `Quick Harvest`, `Quick Craft`, `Upgrade`, guarded `Destroy Building`), forest `Wolf`/`Bear` encounters, Continent Expeditions, and **Start New Village** relocation when average condition drops `< 20%` (leaving `Abandoned` markers on the Continent).
 
 ---
 
@@ -81,7 +85,7 @@ Obelisk/
 # 1. Install workspace dependencies from the repository root
 npm install
 
-# 2. Run all unit & UI component tests (59 tests across 7 suites)
+# 2. Run all unit & UI component tests (64 tests across 7 suites)
 npm test
 
 # 3. Run ESLint across shared, client, and server
@@ -104,9 +108,9 @@ npm run build:client
 | **Stage 1** | Deterministic `100×100` Continent & `25×25` Territory generators (`/shared`) | Complete |
 | **Stage 2** | Interactive Gameplay/Dev Canvas Map Visualizer & frustum culling (`/client`) | Complete |
 | **Stage 3** | Stone Age survival vertical slice: Tech Tree, Warehouse, Drying Rack, Salt, FEFO/Spoilage, Debuffs & Offline/Sandbox UI | Complete (`v0.3.0`) |
-| **Stage 4** | Copper Age: Smithy 6-tool split, fractional tier-level scaling, Prospector, continuous production, Farmstead/Crop Fields/Orchards/Livestock, Walls, Market (`1:1`), Continent Expeditions & Bronze Age trigger | Active (`in dev`) |
-| **Stage 5** | Express API, MongoDB sparse deltas, auth, authoritative Fog of War enforcement (`/server`) | Planned |
-| **Stage 6** | Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk | Planned |
+| **Stage 4** | Copper Age: Smithy 6-tool split, fractional tier-level scaling, Prospector, continuous deposits & Well moisture scaling, `N/P/K` farming & Animal slaughter, Vessels/Baskets, Building Degradation & Repair/Abandonment, Right-click Quick Actions & Destroy Building, Wolf/Bear encounters, Real-time `HH:MM:SS` timers, Idle Unit Dismissal & Bronze Age trigger | Complete (`v0.4.0`) |
+| **Stage 5** | Bronze Age vertical slice (metallurgy, Bronze tools/units, regional logistics) | Next |
+| **Stage 6** | Express API, MongoDB sparse deltas, Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk (`/server`) | Planned |
 
 See [GAME_OVERVIEW.md](./GAME_OVERVIEW.md) and [`docs/`](./docs/) for full specifications.
 

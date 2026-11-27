@@ -150,7 +150,7 @@ export default function TopNavbar({
           <div className="space-y-3 text-xs leading-relaxed">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
               <h2 id={guideTitleId} className="text-base font-bold text-amber-300">
-                How to Play — Stone Age Guide
+                How to Play — Stone &amp; Copper Age Guide
               </h2>
               <button
                 type="button"
@@ -165,46 +165,42 @@ export default function TopNavbar({
               <section>
                 <h3 className="font-semibold text-amber-200">1. Map, Units &amp; Missions</h3>
                 <p>
-                  Left-click <strong>Main Village Hall (12, 12)</strong> to train Gatherers, Hunters,
-                  and Builders. Right-click any explored Territory tile to dispatch{' '}
-                  <strong>Gather</strong>, <strong>Hunt</strong>, <strong>Collect Water</strong>, a{' '}
-                  <strong>Team</strong>, or <strong>Build</strong>. Teams reveal a 3×3 frontier when
-                  they return.
+                  Left-click <strong>Main Village Hall (12, 12)</strong> to train or dismiss
+                  idle units (Gatherers, Hunters, Builders, Prospectors). Right-click explored tiles
+                  to <strong>Gather</strong>, <strong>Hunt</strong> (watch for Forest Wolves/Bears!),
+                  <strong> Collect Water</strong>, send a <strong>Team</strong>, or open{' '}
+                  <strong>Quick Actions</strong> on placed buildings.
                 </p>
               </section>
 
               <section>
-                <h3 className="font-semibold text-amber-200">2. Auto-Feeding, Water &amp; Spoilage</h3>
+                <h3 className="font-semibold text-amber-200">2. Auto-Feeding, Vessels &amp; Spoilage</h3>
                 <p>
-                  Only <strong>active units and building workers (`Pop Used`)</strong> eat 1 food + 1
-                  water bowl per in-game day. Edible items are eaten automatically{' '}
-                  <strong>fastest-spoiling first</strong>. Cook raw meat/fish at a{' '}
-                  <strong>Firepit</strong>, or craft <strong>Drying Racks</strong> (with Salt boiled
-                  at the Firepit) to slash daily spoilage.
+                  Only <strong>Pop Used</strong> eats 1 food + 1 water bowl per day{' '}
+                  (fastest-spoiling first). Cook or boil Salt at a <strong>Firepit</strong>, craft{' '}
+                  <strong>Woven Baskets</strong> (+15 storage) &amp; <strong>Clay Vessels</strong>{' '}
+                  (+10 water / +20 preserved food), and cure meat on <strong>Drying Racks</strong>.
                 </p>
               </section>
 
               <section>
-                <h3 className="font-semibold text-amber-200">3. Starvation Debuffs &amp; Recovery</h3>
+                <h3 className="font-semibold text-amber-200">3. Starvation, Degradation &amp; Abandonment</h3>
                 <p>
-                  Missing food or water stacks daily penalties: <strong>Hunger I (-10%)</strong>,{' '}
-                  <strong>II (-30%)</strong>, <strong>III (-50%)</strong>,{' '}
-                  <strong>Sickness (-80%)</strong>, and <strong>Death (-80% + -10% max pop/day)</strong>.
-                  If max pop hits 0, the village is abandoned. Fed days recover +20% efficiency and
-                  +10% max pop per day.
+                  Missing rations stack <strong>Hunger I–III → Sickness → Death</strong>, while
+                  buildings have a 3-day buffer before losing 2%/day (4% Winter; reduced by{' '}
+                  <strong>City Walls</strong>). Use <strong>Repair</strong> / <strong>Repair All</strong>;
+                  below 20% average condition abandons the village (<strong>Start New Village</strong>).
                 </p>
               </section>
 
               <section>
-                <h3 className="font-semibold text-amber-200">4. Storage, Upgrades &amp; Copper Age</h3>
+                <h3 className="font-semibold text-amber-200">4. Copper Age, N/P/K Farming &amp; Timers</h3>
                 <p>
-                  <strong>Main</strong>, <strong>House</strong>, <strong>Warehouse</strong>, and{' '}
-                  <strong>Drying Rack</strong> build from basic materials (Sticks, Pelts, Straw),
-                  while <strong>Firepit</strong> and <strong>Clay Kiln</strong> require Small Stones.
-                  Upgrading Main adds +250 storage, +10 max pop, and scales water bowls (10 / 25 /
-                  50). Research <strong>Stone Tools</strong> at Firepit, pan rivers for{' '}
-                  <strong>Copper Nuggets</strong>, and smelt a <strong>Copper Ingot</strong> at the
-                  Kiln to unlock Copper Age.
+                  All costs show <strong>have/needed</strong> and all durations run in real-time{' '}
+                  <strong>HH:MM:SS</strong>. Smelt a <strong>Copper Ingot</strong> to unlock{' '}
+                  <strong>Smithy</strong> (6 tools), moisture-scaled <strong>Wells</strong>,{' '}
+                  <strong>Farmsteads</strong> (N Manure / P Bone Meal / K Wood Ash),{' '}
+                  <strong>Animal Pens</strong>, Continent Expeditions, and Bronze Age alloying.
                 </p>
                 <p className="mt-1 text-[11px] text-amber-300">
                   Desktop Note: Built for Desktop mouse controls (left/right-click menus &amp; wheel
