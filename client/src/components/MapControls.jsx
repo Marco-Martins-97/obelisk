@@ -35,6 +35,7 @@ const BASE_DEV_LAYERS = [
  * @param {(show: boolean) => void} [props.onToggleFog]
  * @param {() => void} [props.onUnlockTerritory]
  * @param {() => void} [props.onUnlockContinent]
+ * @param {() => void} [props.onSpawnColony]
  * @param {(days: number) => void} [props.onJumpDays]
  * @param {(params: { resourceId: string, amount: number }) => void} [props.onGrantResource]
  * @returns {import('react').JSX.Element}
@@ -60,6 +61,7 @@ export default function MapControls({
   onToggleFog,
   onUnlockTerritory,
   onUnlockContinent,
+  onSpawnColony,
   onJumpDays,
   onGrantResource,
 }) {
@@ -251,7 +253,7 @@ export default function MapControls({
         </div>
       )}
 
-      {(onUnlockTerritory || onUnlockContinent || onJumpDays || onGrantResource) && (
+      {(onUnlockTerritory || onUnlockContinent || onSpawnColony || onJumpDays || onGrantResource) && (
         <div
           aria-label="Sandbox cheat tools"
           className="mx-auto mt-2.5 flex max-w-7xl flex-wrap items-center gap-2 border-t border-slate-800 pt-2.5 text-xs"
@@ -272,6 +274,15 @@ export default function MapControls({
               className="rounded-md border border-emerald-700/70 bg-emerald-950/60 px-2.5 py-1 font-medium text-emerald-200 hover:bg-emerald-900/70"
             >
               Unlock Continent
+            </button>
+          )}
+          {onSpawnColony && (
+            <button
+              type="button"
+              onClick={onSpawnColony}
+              className="rounded-md border border-violet-700/70 bg-violet-950/60 px-2.5 py-1 font-medium text-violet-200 hover:bg-violet-900/70"
+            >
+              + Spawn Colony
             </button>
           )}
 

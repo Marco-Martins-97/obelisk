@@ -141,7 +141,7 @@ export const CROPS = Object.freeze({
     id: 'flax',
     name: 'Wild Flax / Hemp',
     seedItemId: 'roots',
-    harvestItemId: 'straw',
+    harvestItemId: 'flax',
     nutrientType: 'K',
     nutrientCost: 25,
     growthDays: 60,
@@ -150,7 +150,7 @@ export const CROPS = Object.freeze({
     maxTempC: 28,
     yieldMin: 3,
     yieldMax: 10,
-    description: 'Fibrous crop cultivated using Wild Roots stalks (Nutrient K - Potassium); harvests Straw and fibers.',
+    description: 'Fibrous crop cultivated using Wild Roots stalks (Nutrient K - Potassium); harvests Flax Fibers.',
   }),
   vegetables: createCrop({
     id: 'vegetables',

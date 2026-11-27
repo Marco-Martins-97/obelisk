@@ -8,6 +8,12 @@ const EXPEDITION_ROLES = [
   { id: 'prospector', label: 'Prospector (Surveys rock & ores)' },
   { id: 'gatherer', label: 'Gatherer (Collects stone & wood)' },
   { id: 'hunter', label: 'Hunter (Hunts meat, pelts & animals)' },
+  { id: 'spearman', label: 'Spearman (Escort Guard)' },
+  { id: 'swordsman', label: 'Swordsman (Heavy Escort)' },
+  { id: 'archer', label: 'Archer (Ranged Escort)' },
+  { id: 'cavalry', label: 'Cavalry (10 km/h Mounted Escort + 3×3)' },
+  { id: 'fishing_boat', label: 'Fishing Boat (60 bulk water haul)' },
+  { id: 'transport_ship', label: 'Transport Ship (400 bulk cargo haul)' },
 ];
 
 /**
@@ -30,6 +36,12 @@ export default function ContinentExpeditionModal({
     prospector: 0,
     gatherer: 0,
     hunter: 0,
+    spearman: 0,
+    swordsman: 0,
+    archer: 0,
+    cavalry: 0,
+    fishing_boat: 0,
+    transport_ship: 0,
   });
 
   useEffect(() => {

@@ -6,12 +6,13 @@ import {
   LIVESTOCK,
   ORCHARD_TREES,
   RESOURCES,
+  UNITS,
   calculateTierLevelValue,
   getBuildingDailyProduction,
   getBuildingUpgradePreview,
 } from '@obelisk/shared';
 import CostInline from './CostInline.jsx';
-import { formatRealHoursHMS } from '../utils/timeFormat.js';
+import { formatRealDurationHMS, formatRealHoursHMS } from '../utils/timeFormat.js';
 
 /**
  * Renders specialized Stage 4 (Copper Age) building management controls inside BuildingModal:
@@ -38,6 +39,11 @@ export default function CopperAgeBuildingPanels({
   const [tradeGiveId, setTradeGiveId] = useState('sticks');
   const [tradeReceiveId, setTradeReceiveId] = useState('small_stones');
   const [tradeQty, setTradeQty] = useState(5);
+  const [marketTab, setMarketTab] = useState('local');
+  const [offerResId, setOfferResId] = useState('wood_logs');
+  const [offerResQty, setOfferResQty] = useState(20);
+  const [requestResId, setRequestResId] = useState('tin_ore');
+  const [requestResQty, setRequestResQty] = useState(10);
 
   if (!building || building.status !== 'active') return null;
 
@@ -428,7 +434,7 @@ export default function CopperAgeBuildingPanels({
     );
   };
 
-  // 7. Market 1:1 Resource Trade
+  // 7. Market (1 Building, 2 Tabs: Local Barter 1:1 + Regional Caravan Trade in Sandbox)
   const renderMarketSection = () => {
     if (building.buildingId !== 'market') return null;
     const availGive = state.inventory[tradeGiveId] ?? 0;
@@ -438,56 +444,237 @@ export default function CopperAgeBuildingPanels({
       tradeQty > 0 &&
       availGive >= tradeQty;
 
+    const regionalEnabled = Boolean(village.createMarketOffer);
+    const activeSpeed = village.effectiveSpeedFactor ?? state.speedFactor ?? 6;
+    const offers = village.marketOffers ?? [];
+    const offerUnitBulk = RESOURCES[offerResId]?.sizeClass ?? 2;
+    const caravansNeeded = Math.max(
+      1,
+      Math.ceil((Math.max(1, offerResQty) * offerUnitBulk) / (UNITS.caravan?.carryCapacity ?? 150)),
+    );
+    const freeCaravans = freeUnits?.caravan ?? 0;
+    const validOffer =
+      regionalEnabled &&
+      !isAbandoned &&
+      offerResId !== requestResId &&
+      offerResQty > 0 &&
+      requestResQty > 0 &&
+      (state.inventory[offerResId] ?? 0) >= offerResQty &&
+      freeCaravans >= caravansNeeded;
+
     return (
-      <section className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
-        <h3 className="font-semibold text-violet-300">Market Barter (1:1 Exchange)</h3>
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <input
-            type="number"
-            min={1}
-            max={Math.max(1, availGive)}
-            value={tradeQty}
-            onChange={(e) => setTradeQty(Math.max(1, Number(e.target.value) || 1))}
-            className="w-16 rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-slate-100"
-          />
-          <select
-            value={tradeGiveId}
-            onChange={(e) => setTradeGiveId(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
-          >
-            {tradeableIds.map((id) => (
-              <option key={id} value={id}>
-                Give {RESOURCES[id].name} ({state.inventory[id] ?? 0})
-              </option>
-            ))}
-          </select>
-          <span className="text-slate-400">→</span>
-          <select
-            value={tradeReceiveId}
-            onChange={(e) => setTradeReceiveId(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
-          >
-            {tradeableIds.map((id) => (
-              <option key={id} value={id}>
-                Get {RESOURCES[id].name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={!validTrade}
-            onClick={() =>
-              village.tradeMarketResources({
-                giveId: tradeGiveId,
-                giveQty: tradeQty,
-                receiveId: tradeReceiveId,
-              })
-            }
-            className="rounded bg-violet-500 px-2.5 py-1 font-semibold text-white hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
-          >
-            Trade 1:1
-          </button>
+      <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-semibold text-violet-300">Market Exchange</h3>
+          <div className="inline-flex rounded border border-slate-700 bg-slate-900 p-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setMarketTab('local')}
+              className={`rounded px-2 py-0.5 font-medium ${
+                marketTab === 'local'
+                  ? 'bg-violet-500 text-white'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Local Barter (1:1)
+            </button>
+            <button
+              type="button"
+              onClick={() => setMarketTab('regional')}
+              className={`rounded px-2 py-0.5 font-medium ${
+                marketTab === 'regional'
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Regional Caravan Trade
+            </button>
+          </div>
         </div>
+
+        {marketTab === 'local' ? (
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <input
+              type="number"
+              min={1}
+              max={Math.max(1, availGive)}
+              value={tradeQty}
+              onChange={(e) => setTradeQty(Math.max(1, Number(e.target.value) || 1))}
+              className="w-16 rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-slate-100"
+            />
+            <select
+              value={tradeGiveId}
+              onChange={(e) => setTradeGiveId(e.target.value)}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {tradeableIds.map((id) => (
+                <option key={id} value={id}>
+                  Give {RESOURCES[id].name} ({state.inventory[id] ?? 0})
+                </option>
+              ))}
+            </select>
+            <span className="text-slate-400">→</span>
+            <select
+              value={tradeReceiveId}
+              onChange={(e) => setTradeReceiveId(e.target.value)}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+            >
+              {tradeableIds.map((id) => (
+                <option key={id} value={id}>
+                  Get {RESOURCES[id].name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={!validTrade}
+              onClick={() =>
+                village.tradeMarketResources({
+                  giveId: tradeGiveId,
+                  giveQty: tradeQty,
+                  receiveId: tradeReceiveId,
+                })
+              }
+              className="rounded bg-violet-500 px-2.5 py-1 font-semibold text-white hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+            >
+              Trade 1:1
+            </button>
+          </div>
+        ) : !regionalEnabled ? (
+          <p className="text-[11px] text-slate-400">
+            Regional Caravan Trade requires multiple active territories (available in Sandbox mode or
+            after multiplayer API launch).
+          </p>
+        ) : (
+          <div className="space-y-3 text-[11px]">
+            <div className="space-y-2 rounded border border-slate-800 bg-slate-900/90 p-2.5">
+              <div className="flex items-center justify-between text-amber-200">
+                <span className="font-semibold">Post Inter-Territory Trade Offer</span>
+                <span className="font-mono text-slate-300">
+                  Free Caravans: {freeCaravans} (Needs {caravansNeeded})
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  aria-label="Offer quantity"
+                  value={offerResQty}
+                  onChange={(e) => setOfferResQty(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-16 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-100"
+                />
+                <select
+                  aria-label="Offer resource"
+                  value={offerResId}
+                  onChange={(e) => setOfferResId(e.target.value)}
+                  className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+                >
+                  {tradeableIds.map((id) => (
+                    <option key={id} value={id}>
+                      Offer {RESOURCES[id].name} ({state.inventory[id] ?? 0})
+                    </option>
+                  ))}
+                </select>
+                <span className="text-slate-400">for</span>
+                <input
+                  type="number"
+                  min={1}
+                  aria-label="Request quantity"
+                  value={requestResQty}
+                  onChange={(e) => setRequestResQty(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-16 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-slate-100"
+                />
+                <select
+                  aria-label="Request resource"
+                  value={requestResId}
+                  onChange={(e) => setRequestResId(e.target.value)}
+                  className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+                >
+                  {tradeableIds.map((id) => (
+                    <option key={id} value={id}>
+                      Want {RESOURCES[id].name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!validOffer}
+                  onClick={() =>
+                    village.createMarketOffer({
+                      offerId: offerResId,
+                      offerQty: offerResQty,
+                      requestId: requestResId,
+                      requestQty: requestResQty,
+                    })
+                  }
+                  className="rounded bg-amber-500 px-2.5 py-1 font-semibold text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                >
+                  Create Offer
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="font-semibold text-slate-300">Open &amp; Active Trade Caravans</div>
+              {offers.filter((o) => o.status !== 'completed').length === 0 ? (
+                <p className="text-slate-500">No active regional offers yet.</p>
+              ) : (
+                offers
+                  .filter((o) => o.status !== 'completed')
+                  .map((offer) => {
+                    const isOwn = `${offer.sellerCoords.x},${offer.sellerCoords.y}` === state.spawnKey;
+                    const canAccept =
+                      !isOwn &&
+                      offer.status === 'open' &&
+                      !isAbandoned &&
+                      (state.inventory[offer.requestId] ?? 0) >= offer.requestQty;
+                    const offerName = RESOURCES[offer.offerId]?.name ?? offer.offerId;
+                    const reqName = RESOURCES[offer.requestId]?.name ?? offer.requestId;
+                    const phaseLabel =
+                      offer.status === 'open'
+                        ? 'Open Escrow'
+                        : offer.buyerDelivered
+                          ? `Returning to (${offer.sellerCoords.x},${offer.sellerCoords.y}): ${formatRealDurationHMS(offer.returnsAtMs - state.virtualTimeMs, activeSpeed)}`
+                          : `Traveling to (${offer.buyerCoords.x},${offer.buyerCoords.y}): ${formatRealDurationHMS(offer.arrivesAtMs - state.virtualTimeMs, activeSpeed)}`;
+
+                    return (
+                      <div
+                        key={offer.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
+                      >
+                        <div>
+                          <div className="font-medium text-slate-100">
+                            ({offer.sellerCoords.x},{offer.sellerCoords.y}): {offer.offerQty}{' '}
+                            {offerName} → {offer.requestQty} {reqName}
+                          </div>
+                          <div className="font-mono text-[10px] text-amber-300">{phaseLabel}</div>
+                        </div>
+                        {offer.status === 'open' && isOwn && (
+                          <button
+                            type="button"
+                            onClick={() => village.cancelMarketOffer(offer.id)}
+                            className="rounded border border-rose-700/70 bg-rose-950/60 px-2 py-1 text-rose-200 hover:bg-rose-900/70"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        {offer.status === 'open' && !isOwn && (
+                          <button
+                            type="button"
+                            disabled={!canAccept}
+                            onClick={() => village.acceptMarketOffer(offer.id)}
+                            className="rounded bg-emerald-600 px-2.5 py-1 font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                          >
+                            Accept Offer
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        )}
       </section>
     );
   };

@@ -665,21 +665,32 @@ export function calculateWaterCapacity(buildings, inventory = {}) {
 
 /**
  * Resolves unit training resource cost dynamically (`gatherer`/`builder` remain free to avoid
- * soft-locks; `hunter` adds `1 Small Stone` once `stone_tools` is unlocked).
+ * soft-locks; `hunter` adds `1 Small Stone` once `stone_tools` is unlocked; Barracks divisions
+ * use `tier3TrainingCost` once refitted/unlocked at Bronze tier).
  *
  * @param {string} unitId
  * @param {string[] | Set<string>} [unlockedTechs=[]]
+ * @param {Record<string, number>} [unitTiers={}] - Active unit equipment tiers keyed by unitId.
  * @returns {Record<string, number>} Resource requirements keyed by resourceId.
  */
-export function getUnitTrainingCost(unitId, unlockedTechs = []) {
+export function getUnitTrainingCost(unitId, unlockedTechs = [], unitTiers = {}) {
   const def = UNITS[unitId];
   if (!def) return {};
+  const unlocked = unlockedTechs instanceof Set ? unlockedTechs : new Set(unlockedTechs);
+
   if (unitId === 'hunter') {
-    const unlocked = unlockedTechs instanceof Set ? unlockedTechs : new Set(unlockedTechs);
     return unlocked.has('stone_tools')
       ? { sticks: 1, small_stones: 1 }
       : { sticks: 1 };
   }
+
+  if (def.tier3TrainingCost && def.upgradeTechs?.length > 0) {
+    const hasAllUpgrades = def.upgradeTechs.every((t) => unlocked.has(t));
+    if ((unitTiers?.[unitId] ?? 0) >= 3 || (unitTiers?.[unitId] === undefined && hasAllUpgrades)) {
+      return def.tier3TrainingCost;
+    }
+  }
+
   return def.trainingCost ?? {};
 }
 
@@ -950,8 +961,16 @@ export function isTechTriggerSatisfied(
   if (trigger.type === 'starter') return true;
 
   if (trigger.type === 'build') {
+    const equivalentIds =
+      trigger.buildingId === 'smithy'
+        ? ['smithy', 'forge']
+        : trigger.buildingId === 'firepit'
+          ? ['firepit', 'smokehouse']
+          : trigger.buildingId === 'kiln'
+            ? ['kiln', 'forge']
+            : [trigger.buildingId];
     const activeMatches = builtBuildings.filter(
-      (b) => b.buildingId === trigger.buildingId && (!b.status || b.status === 'active'),
+      (b) => equivalentIds.includes(b.buildingId) && (!b.status || b.status === 'active'),
     ).length;
     return activeMatches >= (trigger.count ?? 1);
   }
@@ -991,7 +1010,8 @@ export function canBuildOrUpgradeBuilding({
   }
 
   const unlockedSet = new Set(unlockedTechs ?? []);
-  const effectiveTier = currentLevel === 0 ? mainTier : (buildingTier ?? def.tier);
+  const effectiveTier =
+    currentLevel === 0 ? Math.min(mainTier, def.maxTier ?? mainTier) : (buildingTier ?? def.tier);
 
   if (currentLevel === 0) {
     if (!def.buildable) {
@@ -1522,6 +1542,11 @@ export function rollForestPredatorEncounter({ units = {}, unlockedTechs = [], rn
 
   const gatherers = Math.max(0, Math.floor(units.gatherer ?? 0));
   const hunters = Math.max(0, Math.floor(units.hunter ?? 0));
+  const armedEscorts =
+    Math.max(0, Math.floor(units.spearman ?? 0)) +
+    Math.max(0, Math.floor(units.swordsman ?? 0)) +
+    Math.max(0, Math.floor(units.archer ?? 0)) +
+    Math.max(0, Math.floor(units.cavalry ?? 0));
   const roll = rng();
   const predator = roll < 0.04 ? 'bear' : roll < 0.14 ? 'wolf' : null;
   if (!predator) {
@@ -1533,7 +1558,7 @@ export function rollForestPredatorEncounter({ units = {}, unlockedTechs = [], rn
     };
   }
 
-  if (hunters === 0) {
+  if (hunters === 0 && armedEscorts === 0) {
     const deathChance = predator === 'bear' ? 0.7 : 0.35;
     const gDead = gatherers > 0 && rng() < deathChance ? 1 : 0;
     return {
@@ -1545,12 +1570,24 @@ export function rollForestPredatorEncounter({ units = {}, unlockedTechs = [], rn
   }
 
   const unlocked = unlockedTechs instanceof Set ? unlockedTechs : new Set(unlockedTechs);
+  const knifeYield = getBestUnlockedTool(unlocked, 'knife')?.modifiers?.yieldBonus ?? 0;
   const hDead =
-    predator === 'bear' && hunters === 1 && !unlocked.has('copper_spear') && rng() < 0.2 ? 1 : 0;
-  const bonusLoot =
+    armedEscorts === 0 &&
+    predator === 'bear' &&
+    hunters === 1 &&
+    !unlocked.has('copper_spear') &&
+    !unlocked.has('bronze_spear') &&
+    rng() < 0.2
+      ? 1
+      : 0;
+  const baseLoot =
     predator === 'bear'
       ? { meat: 5, bones: 4, pelts: 3 }
       : { meat: 2, bones: 2, pelts: 1 };
+  const bonusLoot =
+    knifeYield > 0
+      ? { ...baseLoot, meat: baseLoot.meat + knifeYield, pelts: baseLoot.pelts + knifeYield }
+      : baseLoot;
 
   return {
     predator,

@@ -118,6 +118,9 @@ function PlayableVillageWorkspace({
   onHoverSubTile,
   onSelectContinentTile,
   abandonedCoords = [],
+  ownedTerritories = [],
+  onSelectTerritory = null,
+  marketStorageKey = null,
   onStartNewVillage = null,
   topControls = null,
 }) {
@@ -130,6 +133,7 @@ function PlayableVillageWorkspace({
     territory,
     continent,
     fixedSpeedFactor: isOnline ? 6 : null,
+    marketStorageKey,
   });
 
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
@@ -183,6 +187,8 @@ function PlayableVillageWorkspace({
         <VillageHeaderBar
           village={village}
           spawnTile={spawnTile}
+          ownedTerritories={ownedTerritories}
+          onSelectTerritory={onSelectTerritory}
           onOpenBuilding={(b) => setSelectedBuildingId(b.instanceId)}
           onOpenModal={setActiveHudModal}
           onStartNewVillage={
@@ -416,8 +422,11 @@ function SandboxPage() {
   const [selectedCoords, setSelectedCoords] = useState(null);
   const [hoveredSubTile, setHoveredSubTile] = useState(null);
   const sandboxAbandonedKey = `obelisk_abandoned_sandbox_${config.seed}_v1`;
+  const sandboxColoniesKey = `obelisk_sandbox_colonies_${config.seed}_v1`;
   const [abandonedMap, setAbandonedMap] = useState({});
+  const [coloniesMap, setColoniesMap] = useState({});
   const abandonedVillages = abandonedMap[sandboxAbandonedKey] ?? loadAbandonedVillages(sandboxAbandonedKey);
+  const extraColonies = coloniesMap[sandboxColoniesKey] ?? loadAbandonedVillages(sandboxColoniesKey);
 
   useEffect(() => {
     try {
@@ -435,6 +444,29 @@ function SandboxPage() {
     () => pickStarterSpawnTile(continent, config.seed, abandonedVillages),
     [continent, config.seed, abandonedVillages],
   );
+  const ownedTerritories = useMemo(() => {
+    const base = [{ x: spawnTile.x, y: spawnTile.y }];
+    for (const c of extraColonies) {
+      if (!base.some((t) => t.x === c.x && t.y === c.y) && c.x < continent.size && c.y < continent.size) {
+        base.push({ x: c.x, y: c.y });
+      }
+    }
+    return base;
+  }, [spawnTile.x, spawnTile.y, extraColonies, continent.size]);
+
+  const handleSpawnColony = () => {
+    const exclude = [...abandonedVillages, ...ownedTerritories];
+    const nextColony = pickStarterSpawnTile(
+      continent,
+      `${config.seed}:colony:${ownedTerritories.length}`,
+      exclude,
+    );
+    if (exclude.some((t) => t.x === nextColony.x && t.y === nextColony.y)) return;
+    const nextExtras = [...extraColonies, { x: nextColony.x, y: nextColony.y }];
+    saveAbandonedVillages(sandboxColoniesKey, nextExtras);
+    setColoniesMap((prev) => ({ ...prev, [sandboxColoniesKey]: nextExtras }));
+    setSelectedCoords({ x: nextColony.x, y: nextColony.y });
+  };
 
   const handleStartNewVillage = (prevCoords) => {
     const nextAbandoned = abandonedVillages.some(
@@ -447,7 +479,7 @@ function SandboxPage() {
     const nextSpawn = pickStarterSpawnTile(
       continent,
       `${config.seed}:relocate:${nextAbandoned.length}`,
-      nextAbandoned,
+      [...nextAbandoned, ...ownedTerritories],
     );
     setSelectedCoords({ x: nextSpawn.x, y: nextSpawn.y });
   };
@@ -509,6 +541,7 @@ function SandboxPage() {
       onToggleFog={(val) => setConfig((prev) => ({ ...prev, showFog: val }))}
       onUnlockTerritory={village.unlockAllTerritoryFog}
       onUnlockContinent={village.unlockAllContinentFog}
+      onSpawnColony={handleSpawnColony}
       onJumpDays={village.jumpSimulationDays}
       onGrantResource={village.grantSandboxResource}
     />
@@ -519,6 +552,7 @@ function SandboxPage() {
       key="sandbox"
       mode="sandbox"
       storageKey={`obelisk_sandbox_village_v1_${config.seed}_${activeCoords.x}_${activeCoords.y}`}
+      marketStorageKey={`obelisk_sandbox_market_${config.seed}_v1`}
       seed={config.seed}
       continent={continent}
       spawnTile={activeCoords}
@@ -534,6 +568,8 @@ function SandboxPage() {
       onHoverSubTile={setHoveredSubTile}
       onSelectContinentTile={setSelectedCoords}
       abandonedCoords={abandonedVillages}
+      ownedTerritories={ownedTerritories}
+      onSelectTerritory={setSelectedCoords}
       onStartNewVillage={handleStartNewVillage}
       topControls={controls}
     />

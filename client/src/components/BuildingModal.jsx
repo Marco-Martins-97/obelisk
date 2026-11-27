@@ -12,7 +12,9 @@ import {
   canDemolishBuilding,
   getBuildingTierUpgradeRule,
   getBuildingUpgradePreview,
+  getEffectiveTileProtection,
   getMainTierChangeRule,
+  getUnitRefitRule,
   getUnitTrainingCost,
   groupBuildingRecipesByOutput,
   isTechTriggerSatisfied,
@@ -40,6 +42,7 @@ export default function BuildingModal({
   freeUnits,
   onClose,
   onTrainUnit,
+  onRefitUnitTier,
   onDismissUnit,
   onUpgradeBuilding,
   onUpgradeBuildingTier,
@@ -110,6 +113,7 @@ export default function BuildingModal({
   const activeSpeed = village?.effectiveSpeedFactor ?? state.speedFactor ?? 6;
   const effPenalty = state.efficiencyPenalty ?? 0;
   const dismissUnitFn = onDismissUnit ?? village?.dismissUnit;
+  const refitUnitFn = onRefitUnitTier ?? village?.refitUnitTier;
   const repairFn = onRepairBuilding ?? village?.repairBuilding;
   const repairAllFn = onRepairAllBuildings ?? village?.repairAllBuildings;
   const demolishFn = onDemolishBuilding ?? village?.demolishBuilding;
@@ -265,6 +269,12 @@ export default function BuildingModal({
 
           {(() => {
             const cur = upgradePreview?.current ?? {};
+            const tileProt = getEffectiveTileProtection({
+              buildings: state.buildings,
+              wall: state.wall,
+              x: building.x,
+              y: building.y,
+            });
             const bonusParts = [
               cur.storage > 0 ? `Storage: +${cur.storage}` : null,
               cur.preservedStorage > 0 ? `Granary: +${cur.preservedStorage}` : null,
@@ -274,6 +284,11 @@ export default function BuildingModal({
               cur.maxAttachments > 0 ? `Attachments: ${cur.maxAttachments}` : null,
               cur.penCapacity > 0 ? `Pen Cap: ${cur.penCapacity}` : null,
               cur.productionPerDay > 0 ? `Output: +${cur.productionPerDay}/d` : null,
+              def.id === 'watchtower' && cur.wallDefensePercent > 0
+                ? `3×3 Aura Defense: ${cur.wallDefensePercent}%`
+                : tileProt.defensePercent > 0
+                  ? `Tile Protection: ${tileProt.defensePercent}%`
+                  : null,
             ].filter(Boolean);
 
             return bonusParts.length > 0 ? (
@@ -395,7 +410,13 @@ export default function BuildingModal({
                       .filter((unitId) => (main?.tier ?? 1) >= (UNITS[unitId]?.tier ?? 1))
                       .map((unitId) => {
                         const u = UNITS[unitId];
-                        const unitCost = getUnitTrainingCost(unitId, state.unlockedTechs);
+                        const curCount = state.units[unitId] ?? 0;
+                        const curUnitTier = state.unitTiers?.[unitId] ?? u.tier;
+                        const unitCost = getUnitTrainingCost(
+                          unitId,
+                          state.unlockedTechs,
+                          state.unitTiers,
+                        );
                         const canAffordUnit = Object.entries(unitCost).every(
                           ([id, q]) => (state.inventory[id] ?? 0) >= q,
                         );
@@ -405,85 +426,157 @@ export default function BuildingModal({
                         const hasAnimals = missingAnimals.length === 0;
                         const prosOk =
                           unitId !== 'prospector' || state.unlockedTechs.includes('bone_pickaxe');
+                        const missingTechs = (u.requiredTechs ?? []).filter(
+                          (t) => !state.unlockedTechs.includes(t),
+                        );
+                        const techsOk = missingTechs.length === 0;
+                        const refitRule =
+                          u.upgradeTechs?.length > 0 && curCount > 0 && curUnitTier < 3
+                            ? getUnitRefitRule({
+                                unitId,
+                                currentCount: curCount,
+                                currentUnitTier: curUnitTier,
+                                unlockedTechs: state.unlockedTechs,
+                                inventory: state.inventory,
+                              })
+                            : null;
                         const canTrain =
                           !isAbandoned &&
                           prosOk &&
+                          techsOk &&
                           hasAnimals &&
                           canAffordUnit &&
                           popUsed + u.popCost <= maxPop;
                         return (
                           <div
                             key={unitId}
-                            className="flex items-center justify-between rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
+                            className="flex flex-col gap-1.5 rounded border border-slate-800 bg-slate-900 px-2.5 py-2"
                           >
-                            <div>
-                              <div className="font-medium text-slate-100">
-                                {u.name} ({freeUnits[unitId]}/{state.units[unitId] ?? 0} free)
-                              </div>
-                              <div className="text-[11px] text-slate-400">
-                                Pop: {u.popCost}
-                                {Object.keys(unitCost).length > 0 && (
-                                  <>
-                                    {' · Cost: '}
-                                    <CostInline cost={unitCost} inventory={state.inventory} />
-                                  </>
-                                )}
-                                {Object.keys(u.requiredAnimal ?? {}).length > 0 && (
-                                  <>
-                                    {' · '}
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-1.5 font-medium text-slate-100">
+                                  <span>
+                                    {u.name} ({freeUnits[unitId]}/{curCount} free)
+                                  </span>
+                                  {u.upgradeTechs?.length > 0 && (
                                     <span
-                                      className={
-                                        missingAnimals.length > 0
-                                          ? 'font-semibold text-rose-400'
-                                          : 'text-slate-300'
-                                      }
+                                      className={`rounded px-1.5 py-0.5 text-[10px] ${
+                                        curUnitTier >= 3
+                                          ? 'bg-amber-500/20 text-amber-300'
+                                          : 'bg-slate-800 text-slate-400'
+                                      }`}
                                     >
-                                      Needs:{' '}
-                                      {Object.entries(u.requiredAnimal)
-                                        .map(([a, q]) => `${state.animals?.[a] ?? 0}/${q} ${a}`)
-                                        .join(', ')}
+                                      {curUnitTier >= 3 ? 'Bronze Tier' : 'Copper Tier'}
                                     </span>
-                                  </>
-                                )}
-                                {!prosOk && (
-                                  <>
-                                    {' · '}
-                                    <span className="font-semibold text-rose-400">
-                                      Needs Bone Pickaxe
-                                    </span>
-                                  </>
-                                )}
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  Pop: {u.popCost}
+                                  {u.attack > 0 && (
+                                    <>
+                                      {' · '}
+                                      Atk/Def:{' '}
+                                      {curUnitTier >= 3 ? `${u.tier3Attack}/${u.tier3Defense}` : `${u.attack}/${u.defense}`}
+                                    </>
+                                  )}
+                                  {Object.keys(unitCost).length > 0 && (
+                                    <>
+                                      {' · Cost: '}
+                                      <CostInline cost={unitCost} inventory={state.inventory} />
+                                    </>
+                                  )}
+                                  {Object.keys(u.requiredAnimal ?? {}).length > 0 && (
+                                    <>
+                                      {' · '}
+                                      <span
+                                        className={
+                                          missingAnimals.length > 0
+                                            ? 'font-semibold text-rose-400'
+                                            : 'text-slate-300'
+                                        }
+                                      >
+                                        Needs:{' '}
+                                        {Object.entries(u.requiredAnimal)
+                                          .map(([a, q]) => `${state.animals?.[a] ?? 0}/${q} ${a}`)
+                                          .join(', ')}
+                                      </span>
+                                    </>
+                                  )}
+                                  {!prosOk && (
+                                    <>
+                                      {' · '}
+                                      <span className="font-semibold text-rose-400">
+                                        Needs Bone Pickaxe
+                                      </span>
+                                    </>
+                                  )}
+                                  {!techsOk && (
+                                    <>
+                                      {' · '}
+                                      <span className="font-semibold text-rose-400">
+                                        Needs {missingTechs.map((t) => TECHNOLOGIES[t]?.name ?? t).join(', ')}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              {dismissUnitFn && (
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                {dismissUnitFn && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Dispense 1 ${u.name}`}
+                                    disabled={isAbandoned || (freeUnits[unitId] ?? 0) < 1}
+                                    onClick={() => dismissUnitFn(unitId)}
+                                    className={`rounded border px-2 py-1 font-semibold transition ${
+                                      !isAbandoned && (freeUnits[unitId] ?? 0) >= 1
+                                        ? 'border-rose-700/70 bg-rose-950/60 text-rose-200 hover:bg-rose-900/70'
+                                        : 'cursor-not-allowed border-slate-800 bg-slate-900 text-slate-600'
+                                    }`}
+                                  >
+                                    Dispense -1
+                                  </button>
+                                )}
                                 <button
                                   type="button"
-                                  aria-label={`Dispense 1 ${u.name}`}
-                                  disabled={isAbandoned || (freeUnits[unitId] ?? 0) < 1}
-                                  onClick={() => dismissUnitFn(unitId)}
-                                  className={`rounded border px-2 py-1 font-semibold transition ${
-                                    !isAbandoned && (freeUnits[unitId] ?? 0) >= 1
-                                      ? 'border-rose-700/70 bg-rose-950/60 text-rose-200 hover:bg-rose-900/70'
-                                      : 'cursor-not-allowed border-slate-800 bg-slate-900 text-slate-600'
+                                  disabled={!canTrain}
+                                  onClick={() => onTrainUnit(unitId)}
+                                  className={`rounded px-2.5 py-1 font-semibold transition ${
+                                    canTrain
+                                      ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                                      : 'cursor-not-allowed bg-slate-800 text-slate-500'
                                   }`}
                                 >
-                                  Dispense -1
+                                  Train +1
                                 </button>
-                              )}
-                              <button
-                                type="button"
-                                disabled={!canTrain}
-                                onClick={() => onTrainUnit(unitId)}
-                                className={`rounded px-2.5 py-1 font-semibold transition ${
-                                  canTrain
-                                    ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                                    : 'cursor-not-allowed bg-slate-800 text-slate-500'
-                                }`}
-                              >
-                                Train +1
-                              </button>
+                              </div>
                             </div>
+
+                            {refitRule && refitUnitFn && (
+                              <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-1.5 text-[11px]">
+                                <div className="text-amber-200">
+                                  Refit {curCount} to Bronze:{' '}
+                                  {refitRule.missingTechs.length > 0 ? (
+                                    <span className="text-rose-400">
+                                      Requires {refitRule.missingTechs.map((t) => TECHNOLOGIES[t]?.name ?? t).join(', ')}
+                                    </span>
+                                  ) : (
+                                    <CostInline cost={refitRule.cost} inventory={state.inventory} />
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={isAbandoned || !refitRule.allowed}
+                                  onClick={() => refitUnitFn(unitId)}
+                                  className={`rounded px-2 py-0.5 font-semibold ${
+                                    !isAbandoned && refitRule.allowed
+                                      ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                                      : 'cursor-not-allowed bg-slate-800 text-slate-500'
+                                  }`}
+                                >
+                                  Refit → Bronze
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -607,9 +700,20 @@ export default function BuildingModal({
                               )}
                               {group.recipes.length > 1 &&
                                 group.recipes.map((variant) => {
-                                  const viaLabel = Object.keys(variant.inputs)[0]?.includes('_ore')
+                                  const keys = Object.keys(variant.inputs);
+                                  const viaLabel = keys.some((k) => k.includes('_ore'))
                                     ? 'Ore'
-                                    : 'Nuggets';
+                                    : keys.some((k) => k.includes('_nugget'))
+                                      ? 'Nuggets'
+                                      : keys.includes('salt')
+                                        ? 'Salt'
+                                        : keys.includes('wood_ash')
+                                          ? 'Ash'
+                                          : keys.includes('flax')
+                                            ? 'Flax'
+                                            : keys.includes('straw')
+                                              ? 'Straw'
+                                              : variant.name;
                                   const isCurrent = variant.id === chosenRecipe.id;
                                   return (
                                     <button

@@ -187,6 +187,59 @@ export function getWallBonuses(wallState) {
 }
 
 /**
+ * Evaluates the strongest active `Watchtower` (`3x3` aura) covering tile `(x, y)`.
+ *
+ * @param {Array<{ buildingId: string, x: number, y: number, tier?: number, level?: number, status?: string }>} buildings
+ * @param {number} x
+ * @param {number} y
+ * @returns {number} Highest Watchtower defense percentage covering `(x, y)` (0 if uncovered).
+ */
+export function getWatchtowerTileDefense(buildings = [], x = 0, y = 0) {
+  const towerDef = BUILDINGS.watchtower;
+  if (!towerDef) return 0;
+
+  let best = 0;
+  for (const bld of buildings ?? []) {
+    if (bld.buildingId !== 'watchtower') continue;
+    if (bld.status && bld.status !== 'active') continue;
+    if (Math.abs(bld.x - x) <= 1 && Math.abs(bld.y - y) <= 1) {
+      const pct = calculateTierLevelValue(
+        towerDef.defenseTierBases,
+        bld.tier ?? towerDef.tier,
+        bld.level ?? 1,
+        towerDef.maxLevel,
+      );
+      if (pct > best) best = pct;
+    }
+  }
+  return best;
+}
+
+/**
+ * Computes effective fortification & degradation reduction at `(x, y)`.
+ * `City Wall` and covering `Watchtower` (`3x3` zone) overlap without additive stacking —
+ * the single highest active protection value prevails.
+ *
+ * @param {object} params
+ * @param {Array<object>} [params.buildings=[]]
+ * @param {{ tier?: number, level?: number } | null} [params.wall=null]
+ * @param {number} [params.x=0]
+ * @param {number} [params.y=0]
+ * @returns {{ defensePercent: number, degradationReduction: number, wallDefense: number, towerDefense: number }}
+ */
+export function getEffectiveTileProtection({ buildings = [], wall = null, x = 0, y = 0 } = {}) {
+  const wallDefense = getWallBonuses(wall).defensePercent;
+  const towerDefense = getWatchtowerTileDefense(buildings, x, y);
+  const defensePercent = Math.max(wallDefense, towerDefense);
+  return {
+    defensePercent,
+    degradationReduction: Math.min(0.8, defensePercent / 100),
+    wallDefense,
+    towerDefense,
+  };
+}
+
+/**
  * Validates tile placement rules for Copper Age buildings (`timber_camp` forest-only,
  * `clay_pit` near water, `crop_field`/`animal_pen`/`orchard` adjacent to active Farmstead).
  *
@@ -430,6 +483,16 @@ export function getBuildingDailyProduction({
       {
         resourceId: 'water',
         ratePerDay: Math.round(effectiveDaily * moistureMult * 100) / 100,
+        remaining: null,
+      },
+    ];
+  }
+
+  if (def.id === 'port') {
+    return [
+      {
+        resourceId: 'fish',
+        ratePerDay: Math.round(effectiveDaily * 100) / 100,
         remaining: null,
       },
     ];
@@ -699,7 +762,8 @@ export function resolveCropHarvest({ plot, unlockedTechs = [] }) {
   const crop = CROPS[plot.cropId];
   const normalizedNutrients = normalizeCropNutrients(plot.nutrients);
   const hoeTool = getBestUnlockedTool(unlockedTechs, 'hoe');
-  const toolBonus = hoeTool?.modifiers?.yieldBonus ?? 0;
+  const sickleTool = getBestUnlockedTool(unlockedTechs, 'sickle');
+  const toolBonus = (hoeTool?.modifiers?.yieldBonus ?? 0) + (sickleTool?.modifiers?.yieldBonus ?? 0);
   const nutrientFactor = Math.max(0.35, Math.min(1, 0.35 + (normalizedNutrients[crop.nutrientType] ?? 0) / 150));
   const avgYield = (crop.yieldMin + crop.yieldMax) / 2 + toolBonus;
   const harvestedQty = Math.max(1, Math.round(plot.survivingSlots * avgYield * nutrientFactor));
@@ -834,11 +898,13 @@ export function resolveOrchardHarvest({ plot, season, year, unlockedTechs = [] }
  */
 export function rollWildAnimalCapture({ unlockedTechs = [], rng }) {
   const unlocked = new Set(unlockedTechs);
-  const captureChance = unlocked.has('copper_spear')
-    ? 0.35
-    : unlocked.has('stone_spear')
-      ? 0.25
-      : 0;
+  const captureChance = unlocked.has('bronze_spear')
+    ? 0.45
+    : unlocked.has('copper_spear')
+      ? 0.35
+      : unlocked.has('stone_spear')
+        ? 0.25
+        : 0;
   if (captureChance <= 0 || typeof rng !== 'function' || rng() >= captureChance) {
     return { captured: false, animalId: null };
   }
@@ -952,7 +1018,10 @@ export function calculateContinentExpeditionPlan({
     (sum, [id, q]) => sum + Math.floor(q) * UNITS[id].popCost,
     0,
   );
-  const carryCapacity = Math.max(0, Math.floor(units.caravan ?? 0)) * (UNITS.caravan?.carryCapacity ?? 150);
+  const carryCapacity = activeEntries.reduce(
+    (sum, [id, q]) => sum + Math.floor(q) * (UNITS[id].carryCapacity ?? 0),
+    0,
+  );
 
   const oneWayHours = distanceKm / (slowestSpeedKmPerHour * effMult);
   const workHours = maxWorkHours / effMult;
@@ -1005,15 +1074,24 @@ export function resolveContinentExpedition({
   rng,
 }) {
   const scouts = Math.max(0, Math.floor(units.scout ?? 0));
+  const cavalry = Math.max(0, Math.floor(units.cavalry ?? 0));
   const caravans = Math.max(0, Math.floor(units.caravan ?? 0));
+  const boats =
+    Math.max(0, Math.floor(units.fishing_boat ?? 0)) +
+    Math.max(0, Math.floor(units.transport_ship ?? 0));
   const gatherers = Math.max(0, Math.floor(units.gatherer ?? 0));
   const hunters = Math.max(0, Math.floor(units.hunter ?? 0));
+  const soldiers =
+    Math.max(0, Math.floor(units.spearman ?? 0)) +
+    Math.max(0, Math.floor(units.swordsman ?? 0)) +
+    Math.max(0, Math.floor(units.archer ?? 0)) +
+    cavalry;
   const prospectors = Math.max(0, Math.floor(units.prospector ?? 0));
 
   let nextFog = new Uint8Array(continentFog);
   let newlyRevealedCount = 0;
 
-  if (scouts > 0) {
+  if (scouts > 0 || cavalry > 0) {
     const rev = revealBox3x3(continentFog, continentSize, targetTile.x, targetTile.y, {
       requireCenterExplored: false,
       radius: 1,
@@ -1038,20 +1116,30 @@ export function resolveContinentExpedition({
   }
 
   let capturedAnimal = null;
-  if (hunters > 0) {
-    addLoot('meat', hunters * (2 + Math.floor(rng() * 2)));
-    addLoot('pelts', hunters * (1 + Math.floor(rng() * 2)));
-    if (caravans > 0 && rng() < 0.35) {
+  if (hunters > 0 || soldiers > 0) {
+    const huntCount = hunters + Math.floor(soldiers / 2);
+    if (huntCount > 0) {
+      addLoot('meat', huntCount * (2 + Math.floor(rng() * 2)));
+      addLoot('pelts', huntCount * (1 + Math.floor(rng() * 2)));
+    }
+    if (caravans > 0 && hunters > 0 && rng() < 0.35) {
       const animalIds = Object.keys(LIVESTOCK);
       capturedAnimal = animalIds[Math.floor(rng() * animalIds.length)];
     }
   }
 
-  const maxCarryBulk = caravans * (UNITS.caravan?.carryCapacity ?? 150);
+  if (boats > 0 && (targetTile?.isWater || targetTile?.biome === 'ocean' || targetTile?.biome === 'coast')) {
+    addLoot('fish', boats * (4 + Math.floor(rng() * 4)));
+  }
+
+  const maxCarryBulk = Object.entries(units ?? {}).reduce(
+    (sum, [id, q]) => sum + Math.max(0, Math.floor(Number(q) || 0)) * (UNITS[id]?.carryCapacity ?? 0),
+    0,
+  );
   const itemsBroughtBack = {};
   let usedCarry = 0;
 
-  if (caravans > 0) {
+  if (maxCarryBulk > 0) {
     for (const [id, qty] of Object.entries(rawLoot)) {
       const bulk = RESOURCES[id]?.sizeClass ?? 2;
       for (let i = 0; i < qty; i += 1) {
@@ -1073,7 +1161,7 @@ export function resolveContinentExpedition({
     },
     itemsBroughtBack,
     capturedAnimal,
-    intelOnly: caravans === 0,
+    intelOnly: maxCarryBulk === 0,
   };
 }
 
@@ -1360,13 +1448,18 @@ export function advanceDailyBuildingDegradation({
 }) {
   const days = Math.max(0, Math.floor(elapsedDays));
   const dailyBase = season === 'winter' ? 4 : 2;
-  const wallMitigation = getWallBonuses(wall).degradationReduction;
-  const wearPerDay = Math.round(dailyBase * (1 - wallMitigation) * 100) / 100;
 
   let activeCount = 0;
   let condSum = 0;
   const nextBuildings = (buildings ?? []).map((b) => {
     if (b.status && b.status !== 'active') return b;
+    const protection = getEffectiveTileProtection({
+      buildings,
+      wall,
+      x: b.x ?? 12,
+      y: b.y ?? 12,
+    }).degradationReduction;
+    const wearPerDay = Math.round(dailyBase * (1 - protection) * 100) / 100;
     let grace = b.graceDaysRemaining ?? BUILDING_DEGRADATION_GRACE_DAYS;
     let cond = b.condition ?? 100;
 
@@ -1484,7 +1577,7 @@ export function canDemolishBuilding({
  * @param {object} params
  * @returns {{ animals: Record<string, number>, slaughtered: number, yields: Record<string, number> }}
  */
-export function slaughterLivestock({ animals = {}, animalId, count = 1 }) {
+export function slaughterLivestock({ animals = {}, animalId, count = 1, unlockedTechs = [] }) {
   const spec = LIVESTOCK[animalId];
   const have = Math.max(0, Math.floor(animals?.[animalId] ?? 0));
   const slaughtered = spec ? Math.min(have, Math.max(0, Math.floor(Number(count) || 0))) : 0;
@@ -1492,13 +1585,136 @@ export function slaughterLivestock({ animals = {}, animalId, count = 1 }) {
     return { animals: { ...animals }, slaughtered: 0, yields: {} };
   }
 
+  const knifeYield = getBestUnlockedTool(unlockedTechs, 'knife')?.modifiers?.yieldBonus ?? 0;
   const nextAnimals = { ...animals, [animalId]: have - slaughtered };
   const yields = {};
   for (const [resId, qty] of Object.entries(spec.slaughterYield ?? {})) {
     if (qty > 0) yields[resId] = qty * slaughtered;
   }
+  if (knifeYield > 0 && yields.meat) {
+    yields.meat += knifeYield * slaughtered;
+  }
 
   return { animals: nextAnimals, slaughtered, yields };
+}
+
+/**
+ * Evaluates Option B Barracks batch equipment refit from Tier 2 (Copper) -> Tier 3 (Bronze)
+ * for all standing units of a given division (`cost = currentCount * refitDeltaCost`).
+ *
+ * @param {object} params
+ * @returns {{
+ *   allowed: boolean,
+ *   targetTier: number,
+ *   unitCount: number,
+ *   cost: Record<string, number>,
+ *   missingTechs: string[],
+ *   canAfford: boolean,
+ *   reason: string | null,
+ * }} Refit eligibility & cost payload.
+ */
+export function getUnitRefitRule({
+  unitId,
+  currentCount = 0,
+  currentUnitTier = 2,
+  unlockedTechs = [],
+  inventory = {},
+}) {
+  const def = UNITS[unitId];
+  if (!def || !def.upgradeTechs?.length) {
+    return {
+      allowed: false,
+      targetTier: currentUnitTier,
+      unitCount: 0,
+      cost: {},
+      missingTechs: [],
+      canAfford: false,
+      reason: 'Unit cannot be refitted.',
+    };
+  }
+  if (currentUnitTier >= 3) {
+    return {
+      allowed: false,
+      targetTier: 3,
+      unitCount: Math.max(0, Math.floor(currentCount)),
+      cost: {},
+      missingTechs: [],
+      canAfford: true,
+      reason: 'Already Bronze Tier.',
+    };
+  }
+
+  const unlockedSet = new Set(unlockedTechs ?? []);
+  const missingTechs = def.upgradeTechs.filter((t) => !unlockedSet.has(t));
+  const cleanCount = Math.max(0, Math.floor(currentCount));
+  const cost =
+    cleanCount > 0
+      ? Object.fromEntries(
+          Object.entries(def.refitDeltaCost ?? {}).map(([id, q]) => [id, q * cleanCount]),
+        )
+      : {};
+  const canAfford = Object.entries(cost).every(([id, q]) => (inventory[id] ?? 0) >= q);
+
+  return {
+    allowed: missingTechs.length === 0 && cleanCount > 0 && canAfford,
+    targetTier: 3,
+    unitCount: cleanCount,
+    cost,
+    missingTechs,
+    canAfford,
+    reason:
+      missingTechs.length > 0
+        ? `Requires: ${missingTechs.join(', ')}`
+        : cleanCount === 0
+          ? 'No units to refit.'
+          : !canAfford
+            ? 'Insufficient resources for refit.'
+            : null,
+  };
+}
+
+/**
+ * Plans a Sandbox Inter-Territory Caravan Market trade between two Continent coordinates:
+ * `[Departure] -> [Travel] -> [Arrive: Buyer gets offer] -> [Return] -> [Arrival: Seller gets payment]`.
+ *
+ * @param {object} params
+ * @returns {{
+ *   distanceTiles: number,
+ *   distanceKm: number,
+ *   caravansNeeded: number,
+ *   oneWayTravelMs: number,
+ *   arrivesAtMs: number,
+ *   returnsAtMs: number,
+ * }} Caravan dispatch timing and logistics plan.
+ */
+export function calculateMarketTradePlan({
+  from,
+  to,
+  offerId,
+  offerQty = 1,
+  nowMs = 0,
+  efficiencyPenalty = 0,
+}) {
+  const distanceTiles = Math.hypot((to?.x ?? 0) - (from?.x ?? 0), (to?.y ?? 0) - (from?.y ?? 0));
+  const distanceKm = Math.max(0.5, distanceTiles * CONTINENT_TILE_DISTANCE_KM);
+  const effMult = Math.max(0.2, 1 - efficiencyPenalty);
+  const caravanSpeed = UNITS.caravan?.speedKmPerHour ?? 4;
+  const oneWayHours = distanceKm / (caravanSpeed * effMult);
+  const oneWayTravelMs = Math.max(1000, Math.round(oneWayHours * REAL_MS_PER_INGAME_HOUR));
+
+  const unitBulk = RESOURCES[offerId]?.sizeClass ?? 2;
+  const caravanCap = UNITS.caravan?.carryCapacity ?? 150;
+  const caravansNeeded = Math.max(1, Math.ceil((Math.max(1, offerQty) * unitBulk) / caravanCap));
+
+  const arrivesAtMs = nowMs + oneWayTravelMs;
+  return {
+    distanceTiles,
+    distanceKm,
+    caravansNeeded,
+    oneWayTravelMs,
+    arrivesAtMs,
+    returnsAtMs: arrivesAtMs + oneWayTravelMs,
+  };
 }
 
 /**

@@ -39,6 +39,7 @@ import {
   calculateDailySurvival,
   calculateFarmMaxAttachments,
   calculateFarmSeedCapacity,
+  calculateMarketTradePlan,
   calculateMaxPopulation,
   calculatePopUsed,
   calculateRepairAllCost,
@@ -72,13 +73,16 @@ import {
   getBuildingTierUpgradeRule,
   getBuildingUpgradePreview,
   getCalendarState,
+  getEffectiveTileProtection,
   getExploredBounds,
   getMainTierChangeRule,
   getStarvationStageInfo,
   getTaskPhase,
+  getUnitRefitRule,
   getUnitTrainingCost,
   getVillageDailyProductionSummary,
   getWallBonuses,
+  getWatchtowerTileDefense,
   groupBuildingRecipesByOutput,
   isTechTriggerSatisfied,
   normalizedTempToCelsius,
@@ -1221,5 +1225,130 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
     const copperGroup = kilnGroups.find((g) => g.primaryOutputId === 'copper_ingot');
     expect(copperGroup.recipes).toHaveLength(2);
     expect(copperGroup.activeRecipe.id).toBe('smelt_copper_ore');
+  });
+
+  it('implements Bronze Age legacy maxTier: 2 caps, non-stacking 3x3 Watchtowers, Option B Refits, Leather/Tools, Ships & Caravan Trade', () => {
+    // Legacy workshops are capped at Tier 2 and spawn at Tier 2 even when Main is Tier 3.
+    expect(BUILDINGS.firepit.maxTier).toBe(2);
+    expect(BUILDINGS.kiln.maxTier).toBe(2);
+    expect(BUILDINGS.drying_rack.maxTier).toBe(2);
+    expect(BUILDINGS.smithy.maxTier).toBe(2);
+    expect(
+      canBuildOrUpgradeBuilding({
+        buildingId: 'kiln',
+        currentLevel: 0,
+        targetLevel: 1,
+        mainTier: 3,
+        unlockedTechs: ['wood_tools', 'stone_tools'],
+      }).spawnTier,
+    ).toBe(2);
+    expect(
+      getBuildingTierUpgradeRule({
+        building: { buildingId: 'kiln', tier: 2, level: 3, status: 'active' },
+        mainTier: 3,
+      }).allowed,
+    ).toBe(false);
+
+    // Watchtower 3x3 aura and Wall overlap cleanly using max() without additive stacking.
+    const fortBuildings = [
+      { instanceId: 'wt1', buildingId: 'watchtower', x: 10, y: 10, tier: 3, level: 1, status: 'active' },
+      { instanceId: 'b1', buildingId: 'mine', x: 11, y: 11, tier: 2, level: 1, status: 'active', condition: 100, graceDaysRemaining: 0 },
+      { instanceId: 'b2', buildingId: 'mine', x: 15, y: 15, tier: 2, level: 1, status: 'active', condition: 100, graceDaysRemaining: 0 },
+    ];
+    expect(getWatchtowerTileDefense(fortBuildings, 11, 11)).toBe(50);
+    expect(getWatchtowerTileDefense(fortBuildings, 15, 15)).toBe(0);
+    const overlapInside = getEffectiveTileProtection({
+      buildings: fortBuildings,
+      wall: { tier: 3, level: 1 },
+      x: 11,
+      y: 11,
+    });
+    expect(overlapInside.wallDefense).toBe(45);
+    expect(overlapInside.towerDefense).toBe(50);
+    expect(overlapInside.defensePercent).toBe(50);
+
+    // Bloomery & iron_ingot trigger iron_age / Main Tier 4.
+    expect(RECIPES.smelt_iron_ore.unlocksTech).toBe('iron_age');
+    expect(
+      getMainTierChangeRule({
+        currentMainTier: 3,
+        targetMainTier: 4,
+        unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age', 'bronze_age', 'iron_age'],
+      }).targetAge,
+    ).toBe('iron');
+
+    // Leatherworking [Research] -> [Craft] groups Salt and Wood Ash variants under Leather.
+    expect(TECHNOLOGIES.leather_working.unlocksRecipe).toBe('craft_leather');
+    const workshopGroups = groupBuildingRecipesByOutput({
+      recipeIds: BUILDINGS.workshop.craftsRecipes,
+      unlockedTechs: ['leather_working'],
+      inventory: { pelts: 4, salt: 2, wood_ash: 2 },
+      water: 10,
+    });
+    const leatherGroup = workshopGroups.find((g) => g.primaryOutputId === 'leather');
+    expect(leatherGroup.recipes).toHaveLength(2);
+
+    // Option B Barracks batch refit calculates delta cost * count cleanly.
+    const refitLocked = getUnitRefitRule({
+      unitId: 'spearman',
+      currentCount: 5,
+      currentUnitTier: 2,
+      unlockedTechs: ['stone_spear'],
+      inventory: { bronze_ingot: 20 },
+    });
+    expect(refitLocked.allowed).toBe(false);
+    expect(refitLocked.missingTechs).toEqual(['bronze_spear', 'bronze_armor']);
+
+    const refitReady = getUnitRefitRule({
+      unitId: 'spearman',
+      currentCount: 5,
+      currentUnitTier: 2,
+      unlockedTechs: ['stone_spear', 'bronze_spear', 'bronze_armor'],
+      inventory: { bronze_ingot: 5 },
+    });
+    expect(refitReady.allowed).toBe(true);
+    expect(refitReady.cost).toEqual({ bronze_ingot: 5 });
+    expect(getUnitTrainingCost('spearman', ['stone_spear', 'bronze_spear', 'bronze_armor'], { spearman: 3 })).toEqual(
+      UNITS.spearman.tier3TrainingCost,
+    );
+
+    // Armed escorts (Archers) clear Forest predators cleanly without Gatherer loss.
+    const escorted = rollForestPredatorEncounter({
+      units: { gatherer: 2, archer: 1 },
+      unlockedTechs: ['wood_bow', 'copper_knife'],
+      rng: () => 0.02,
+    });
+    expect(escorted.killedPredator).toBe(true);
+    expect(escorted.casualties).toEqual({ gatherer: 0, hunter: 0 });
+    expect(escorted.bonusLoot.meat).toBe(6);
+
+    // Transport Ships add 400 cargo capacity and Port fishes continuously.
+    const navalPlan = calculateContinentExpeditionPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 14, y: 13 },
+      units: { transport_ship: 2 },
+      nowMs: 0,
+    });
+    expect(navalPlan.carryCapacity).toBe(800);
+    expect(
+      getBuildingDailyProduction({
+        building: { buildingId: 'port', tier: 3, level: 1, status: 'active' },
+        tile: { isWater: false, buildable: true },
+      })[0],
+    ).toMatchObject({ resourceId: 'fish', ratePerDay: 15 });
+
+    // Inter-Territory Caravan trade plan scales distanceKm (distance * 12.5 km), caravansNeeded, arrival & return.
+    const tradePlan = calculateMarketTradePlan({
+      from: { x: 10, y: 10 },
+      to: { x: 14, y: 13 },
+      offerId: 'wood_logs',
+      offerQty: 100, // sizeClass 3 -> 300 bulk -> ceil(300/150) = 2 Caravans
+      nowMs: 1000,
+    });
+    expect(tradePlan.distanceTiles).toBe(5);
+    expect(tradePlan.distanceKm).toBe(62.5);
+    expect(tradePlan.caravansNeeded).toBe(2);
+    expect(tradePlan.arrivesAtMs).toBeGreaterThan(1000);
+    expect(tradePlan.returnsAtMs).toBeGreaterThan(tradePlan.arrivesAtMs);
   });
 });

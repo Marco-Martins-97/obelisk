@@ -540,4 +540,136 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     fireEvent.click(screen.getByRole('button', { name: 'Dispense 1 Gatherer' }));
     expect(screen.getByText('0/10')).toBeInTheDocument();
   });
+
+  it('supports Sandbox + Spawn Colony, Territory Switcher, 2-Tab Market & Barracks Option B Refit', () => {
+    render(
+      <MemoryRouter initialEntries={['/sandbox']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+
+    // Spawn a secondary colony and switch between Capital and Colony 1.
+    expect(screen.queryByLabelText('Active Territory')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '+ Spawn Colony' }));
+    const territorySelect = screen.getByLabelText('Active Territory');
+    expect(territorySelect.options).toHaveLength(2);
+    expect(territorySelect.options[0].text).toMatch(/^Capital/);
+    expect(territorySelect.options[1].text).toMatch(/^Colony 1/);
+
+    cleanup();
+
+    // Render BuildingModal for Barracks (Refit -> Bronze) and Market (Local Barter vs Regional Caravan Trade).
+    const onRefitUnitTier = vi.fn();
+    const createMarketOffer = vi.fn();
+    const barracks = {
+      instanceId: 'bar-1',
+      buildingId: 'barracks',
+      x: 11,
+      y: 12,
+      tier: 3,
+      level: 1,
+      status: 'active',
+    };
+    const market = {
+      instanceId: 'mkt-1',
+      buildingId: 'market',
+      x: 13,
+      y: 12,
+      tier: 3,
+      level: 1,
+      status: 'active',
+    };
+    const baseState = {
+      virtualTimeMs: 1000,
+      speedFactor: 6,
+      efficiencyPenalty: 0,
+      spawnKey: '10,10',
+      inventory: {
+        bronze_ingot: 10,
+        copper_ingot: 10,
+        wood_logs: 50,
+        planks: 10,
+        leather: 10,
+        sticks: 20,
+      },
+      water: 10,
+      unlockedTechs: [
+        'wood_tools',
+        'stone_tools',
+        'copper_age',
+        'bronze_age',
+        'stone_spear',
+        'bronze_spear',
+        'bronze_armor',
+      ],
+      craftedCounts: {},
+      buildings: [
+        { instanceId: 'main-0', buildingId: 'main', x: 12, y: 12, tier: 3, level: 1, status: 'active' },
+        barracks,
+        market,
+      ],
+      units: { spearman: 3, caravan: 2, builder: 1 },
+      unitTiers: { spearman: 2 },
+      tasks: [],
+    };
+
+    const { rerender } = render(
+      <BuildingModal
+        building={barracks}
+        state={baseState}
+        village={null}
+        territory={null}
+        maxPop={30}
+        popUsed={6}
+        freeUnits={{ spearman: 3, caravan: 2, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onRefitUnitTier={onRefitUnitTier}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refit → Bronze' }));
+    expect(onRefitUnitTier).toHaveBeenCalledWith('spearman');
+
+    rerender(
+      <BuildingModal
+        building={market}
+        state={baseState}
+        village={{
+          effectiveSpeedFactor: 6,
+          marketOffers: [],
+          createMarketOffer,
+          acceptMarketOffer: vi.fn(),
+          cancelMarketOffer: vi.fn(),
+          tradeMarketResources: vi.fn(),
+        }}
+        territory={null}
+        maxPop={30}
+        popUsed={6}
+        freeUnits={{ spearman: 3, caravan: 2, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Trade 1:1' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Regional Caravan Trade' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Offer' }));
+    expect(createMarketOffer).toHaveBeenCalledWith({
+      offerId: 'wood_logs',
+      offerQty: 20,
+      requestId: 'tin_ore',
+      requestQty: 10,
+    });
+  });
 });

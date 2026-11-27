@@ -94,6 +94,8 @@ function useNativeDialogSync(dialogRef, isOpen, onClose) {
 export function VillageHeaderBar({
   village,
   spawnTile,
+  ownedTerritories = [],
+  onSelectTerritory = null,
   onOpenBuilding,
   onOpenModal,
   onStartNewVillage = null,
@@ -132,9 +134,27 @@ export function VillageHeaderBar({
             {currentAgeName} Age · Main Tier {mainBuilding?.tier ?? 1} Lv {mainBuilding?.level ?? 1}
           </span>
           {spawnTile && (
-            <span className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 font-mono text-[11px] text-slate-300">
-              World ({spawnTile.x}, {spawnTile.y})
-            </span>
+            ownedTerritories.length > 1 && onSelectTerritory ? (
+              <select
+                aria-label="Active Territory"
+                value={`${spawnTile.x},${spawnTile.y}`}
+                onChange={(e) => {
+                  const [tx, ty] = e.target.value.split(',').map(Number);
+                  onSelectTerritory({ x: tx, y: ty });
+                }}
+                className="rounded border border-violet-700/70 bg-slate-950 px-2 py-0.5 font-mono text-[11px] text-violet-200"
+              >
+                {ownedTerritories.map((t, idx) => (
+                  <option key={`${t.x},${t.y}`} value={`${t.x},${t.y}`}>
+                    {idx === 0 ? 'Capital' : `Colony ${idx}`} ({t.x}, {t.y})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 font-mono text-[11px] text-slate-300">
+                World ({spawnTile.x}, {spawnTile.y})
+              </span>
+            )
           )}
           <span
             aria-label="Village survival status"
@@ -299,7 +319,13 @@ export function VillageSidebarPanels({ village, territory = null }) {
           Units (Free / Total)
         </h3>
         <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
-          {Object.keys(UNITS).map((unitId) => {
+          {Object.keys(UNITS)
+            .filter(
+              (unitId) =>
+                (UNITS[unitId]?.tier ?? 1) <= (village.mainBuilding?.tier ?? 1) ||
+                (state.units[unitId] ?? 0) > 0,
+            )
+            .map((unitId) => {
             const totalCount = state.units[unitId] ?? 0;
             const freeCount = freeUnits[unitId] ?? 0;
             return (

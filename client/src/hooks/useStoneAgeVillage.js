@@ -29,6 +29,7 @@ import {
   calculateContinentExpeditionPlan,
   calculateFarmMaxAttachments,
   calculateFarmSeedCapacity,
+  calculateMarketTradePlan,
   calculateMaxPopulation,
   calculatePopUsed,
   calculateRepairAllCost,
@@ -51,6 +52,7 @@ import {
   getCalendarState,
   getMainTierChangeRule,
   getStarvationStageInfo,
+  getUnitRefitRule,
   getUnitTrainingCost,
   getWallBonuses,
   hashCoords,
@@ -170,14 +172,77 @@ function revealTerritoryBorderOnReturn({
   return { territoryFog: fogStep.fog, continentFog: nextContinentFog };
 }
 
+const DEFAULT_UNIT_COUNTS = Object.freeze(
+  Object.fromEntries(Object.keys(UNITS).map((id) => [id, 0])),
+);
+
+const DEFAULT_UNIT_TIERS = Object.freeze({
+  spearman: 2,
+  swordsman: 2,
+  archer: 2,
+  cavalry: 2,
+});
+
+function loadMarketOffers(marketStorageKey) {
+  if (!marketStorageKey) return [];
+  try {
+    const raw = window.localStorage.getItem(marketStorageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMarketOffers(marketStorageKey, offers) {
+  if (!marketStorageKey) return;
+  try {
+    window.localStorage.setItem(marketStorageKey, JSON.stringify(offers));
+  } catch {
+    // Ignore storage quota or private mode issues.
+  }
+}
+
+function creditInactiveTerritoryInStorage({
+  targetStorageKey,
+  itemId,
+  qty,
+  escrowOfferIdToClear = null,
+  logMessage,
+}) {
+  if (!targetStorageKey) return;
+  try {
+    const raw = window.localStorage.getItem(targetStorageKey);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return;
+    const nextEscrows = { ...(saved.marketEscrows ?? {}) };
+    if (escrowOfferIdToClear) {
+      delete nextEscrows[escrowOfferIdToClear];
+    }
+    const maxCap = calculateStorageCapacity(saved.buildings ?? [], saved.inventory ?? {}).totalCapacity;
+    const added = addItemsWithinCapacity(saved.inventory ?? {}, { [itemId]: qty }, maxCap);
+    const updated = {
+      ...saved,
+      inventory: added.inventory,
+      marketEscrows: nextEscrows,
+      logs: [logMessage, ...(saved.logs ?? [])].slice(0, 24),
+    };
+    window.localStorage.setItem(targetStorageKey, JSON.stringify(updated));
+  } catch {
+    // Ignore corrupted target saves cleanly.
+  }
+}
+
 /**
- * Aggregates busy unit counts across all active village tasks.
+ * Aggregates busy unit counts across all active village tasks and locked Market offer escrows.
  *
  * @param {Array<object>} tasks - Active task list.
- * @returns {{ gatherer: number, hunter: number, builder: number, prospector: number, scout: number, caravan: number }} Busy counts by unitId.
+ * @param {Record<string, object>} [marketEscrows={}] - Open/in-transit Market offer Caravan holds.
+ * @returns {Record<string, number>} Busy counts keyed by unitId.
  */
-function calculateBusyUnits(tasks) {
-  const busy = { gatherer: 0, hunter: 0, builder: 0, prospector: 0, scout: 0, caravan: 0 };
+function calculateBusyUnits(tasks, marketEscrows = {}) {
+  const busy = { ...DEFAULT_UNIT_COUNTS };
   for (const task of tasks ?? []) {
     if (
       task.kind === 'build' ||
@@ -199,6 +264,11 @@ function calculateBusyUnits(tasks) {
       }
     }
   }
+  for (const escrow of Object.values(marketEscrows ?? {})) {
+    if (escrow?.caravansNeeded > 0) {
+      busy.caravan += escrow.caravansNeeded;
+    }
+  }
   return busy;
 }
 
@@ -210,13 +280,22 @@ function calculateBusyUnits(tasks) {
  * @param {{ x: number, y: number }} params.spawnTile
  * @param {number} params.continentSize
  * @param {number} params.territorySize
+ * @param {string[]} [params.globalUnlockedTechs]
  * @returns {object} Fresh serializable village state.
  */
-function createInitialState({ sessionKey, seed, spawnTile, continentSize, territorySize }) {
+function createInitialState({
+  sessionKey,
+  seed,
+  spawnTile,
+  continentSize,
+  territorySize,
+  globalUnlockedTechs = null,
+}) {
   const center = Math.floor(territorySize / 2);
   const territoryFog = createInitialTerritoryFog(territorySize);
   const continentFog = new Uint8Array(continentSize * continentSize);
   continentFog[spawnTile.y * continentSize + spawnTile.x] = 1;
+  const mergedTechs = [...new Set([...STARTER_UNLOCKED_TECHS, ...(globalUnlockedTechs ?? [])])];
 
   return {
     sessionKey,
@@ -236,21 +315,16 @@ function createInitialState({ sessionKey, seed, spawnTile, continentSize, territ
     efficiencyPenalty: 0,
     starvationPopLoss: 0,
     isAbandoned: false,
-    units: {
-      gatherer: 0,
-      hunter: 0,
-      builder: 0,
-      prospector: 0,
-      scout: 0,
-      caravan: 0,
-    },
+    units: { ...DEFAULT_UNIT_COUNTS },
+    unitTiers: { ...DEFAULT_UNIT_TIERS },
+    marketEscrows: {},
     animals: { horse: 0, donkey: 0, goat: 0, sheep: 0, chicken: 0 },
     seedReserve: { grain: 0, roots: 0 },
     wall: { tier: 2, level: 0, status: 'none' },
     tileDetails: {},
     productionCarry: {},
     discoveredContinentTiles: {},
-    unlockedTechs: [...STARTER_UNLOCKED_TECHS],
+    unlockedTechs: mergedTechs,
     craftedCounts: {},
     buildings: [
       {
@@ -827,14 +901,21 @@ function loadSavedOrFreshState(storageKey, worldParams) {
           starvationPopLoss: parsed.starvationPopLoss ?? 0,
           isAbandoned: Boolean(parsed.isAbandoned),
           units: {
-            gatherer: 0,
-            hunter: 0,
-            builder: 0,
-            prospector: 0,
-            scout: 0,
-            caravan: 0,
+            ...DEFAULT_UNIT_COUNTS,
             ...(parsed.units ?? {}),
           },
+          unitTiers: {
+            ...DEFAULT_UNIT_TIERS,
+            ...(parsed.unitTiers ?? {}),
+          },
+          marketEscrows: parsed.marketEscrows ?? {},
+          unlockedTechs: [
+            ...new Set([
+              ...STARTER_UNLOCKED_TECHS,
+              ...(parsed.unlockedTechs ?? []),
+              ...(worldParams.globalUnlockedTechs ?? []),
+            ]),
+          ],
           animals: {
             horse: 0,
             donkey: 0,
@@ -887,7 +968,27 @@ export function useStoneAgeVillage({
   territory,
   continent = null,
   fixedSpeedFactor = null,
+  marketStorageKey = null,
+  globalUnlockedTechs = null,
 }) {
+  const globalTechStorageKey = useMemo(
+    () => (marketStorageKey ? `${marketStorageKey}:techs` : null),
+    [marketStorageKey],
+  );
+  const readGlobalTechs = useCallback(() => {
+    const base = new Set([...STARTER_UNLOCKED_TECHS, ...(globalUnlockedTechs ?? [])]);
+    if (globalTechStorageKey) {
+      try {
+        const raw = window.localStorage.getItem(globalTechStorageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed)) parsed.forEach((t) => base.add(t));
+      } catch {
+        // Ignore storage read errors cleanly.
+      }
+    }
+    return [...base];
+  }, [globalUnlockedTechs, globalTechStorageKey]);
+
   const sessionKey = `${storageKey}|${seed}|${spawnTile.x},${spawnTile.y}|${continentSize}|${territory.size}`;
   const worldParams = useMemo(
     () => ({
@@ -896,11 +997,13 @@ export function useStoneAgeVillage({
       spawnTile,
       continentSize,
       territorySize: territory.size,
+      globalUnlockedTechs: readGlobalTechs(),
     }),
-    [sessionKey, seed, spawnTile, continentSize, territory.size],
+    [sessionKey, seed, spawnTile, continentSize, territory.size, readGlobalTechs],
   );
 
   const [rawState, setRawState] = useState(() => loadSavedOrFreshState(storageKey, worldParams));
+  const [marketOffers, setMarketOffers] = useState(() => loadMarketOffers(marketStorageKey));
   const lastWallClockRef = useRef(0);
 
   // Derive active session state without unmounting sibling controls on seed/tile changes.
@@ -923,14 +1026,106 @@ export function useStoneAgeVillage({
     [sessionKey, storageKey, worldParams],
   );
 
-  // Persist snapshots cleanly into localStorage.
+  // Persist snapshots & shared global unlocked technologies cleanly into localStorage.
   useEffect(() => {
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(state));
+      if (globalTechStorageKey) {
+        const merged = [...new Set([...readGlobalTechs(), ...state.unlockedTechs])];
+        window.localStorage.setItem(globalTechStorageKey, JSON.stringify(merged));
+      }
     } catch {
       // Ignore quota or disabled-storage errors gracefully.
     }
-  }, [storageKey, state]);
+  }, [storageKey, state, globalTechStorageKey, readGlobalTechs]);
+
+  const syncMarketDeliveries = useCallback(
+    (clockMs, activeKey) => {
+      if (!marketStorageKey) return;
+      const offers = loadMarketOffers(marketStorageKey);
+      let anyChanged = false;
+      const buyerCredits = [];
+      const sellerCredits = [];
+
+      const nextOffers = offers.map((offer) => {
+        if (offer.status !== 'in_transit') return offer;
+        let updated = { ...offer };
+
+        if (!updated.buyerDelivered && clockMs >= updated.arrivesAtMs) {
+          updated.buyerDelivered = true;
+          anyChanged = true;
+          const buyerLog = `Caravan Trade arrived from (${updated.sellerCoords.x}, ${updated.sellerCoords.y}): +${updated.offerQty} ${RESOURCES[updated.offerId]?.name ?? updated.offerId}.`;
+          if (updated.buyerStorageKey === activeKey) {
+            buyerCredits.push({ offer: updated, log: buyerLog });
+          } else {
+            creditInactiveTerritoryInStorage({
+              targetStorageKey: updated.buyerStorageKey,
+              itemId: updated.offerId,
+              qty: updated.offerQty,
+              logMessage: buyerLog,
+            });
+          }
+        }
+
+        if (!updated.sellerDelivered && clockMs >= updated.returnsAtMs) {
+          updated.sellerDelivered = true;
+          updated.status = 'completed';
+          anyChanged = true;
+          const sellerLog = `Trade Caravan returned from (${updated.buyerCoords.x}, ${updated.buyerCoords.y}): +${updated.requestQty} ${RESOURCES[updated.requestId]?.name ?? updated.requestId}.`;
+          if (updated.sellerStorageKey === activeKey) {
+            sellerCredits.push({ offer: updated, log: sellerLog });
+          } else {
+            creditInactiveTerritoryInStorage({
+              targetStorageKey: updated.sellerStorageKey,
+              itemId: updated.requestId,
+              qty: updated.requestQty,
+              escrowOfferIdToClear: updated.id,
+              logMessage: sellerLog,
+            });
+          }
+        }
+        return updated;
+      });
+
+      if (!anyChanged) return;
+      saveMarketOffers(marketStorageKey, nextOffers);
+      setMarketOffers(nextOffers);
+
+      if (buyerCredits.length > 0 || sellerCredits.length > 0) {
+        updateSessionState((prev) => {
+          let nextInv = { ...prev.inventory };
+          const nextEscrows = { ...(prev.marketEscrows ?? {}) };
+          const addLogs = [];
+          const maxCap = calculateStorageCapacity(prev.buildings, nextInv).totalCapacity;
+
+          for (const entry of buyerCredits) {
+            nextInv = addItemsWithinCapacity(
+              nextInv,
+              { [entry.offer.offerId]: entry.offer.offerQty },
+              maxCap,
+            ).inventory;
+            addLogs.push(entry.log);
+          }
+          for (const entry of sellerCredits) {
+            nextInv = addItemsWithinCapacity(
+              nextInv,
+              { [entry.offer.requestId]: entry.offer.requestQty },
+              maxCap,
+            ).inventory;
+            delete nextEscrows[entry.offer.id];
+            addLogs.push(entry.log);
+          }
+          return {
+            ...prev,
+            inventory: nextInv,
+            marketEscrows: nextEscrows,
+            logs: [...addLogs, ...prev.logs].slice(0, 24),
+          };
+        });
+      }
+    },
+    [marketStorageKey, updateSessionState],
+  );
 
   // 250ms simulation tick scaling real delta by (effectiveSpeedFactor / 6).
   useEffect(() => {
@@ -940,21 +1135,42 @@ export function useStoneAgeVillage({
       const realDeltaMs = Math.max(0, now - lastWallClockRef.current);
       lastWallClockRef.current = now;
 
+      let settledClockMs = 0;
+      const sharedTechs = readGlobalTechs();
       updateSessionState((prev) => {
         const activeSpeed = fixedSpeedFactor ?? prev.speedFactor;
         const virtualDeltaMs = realDeltaMs * (activeSpeed / 6);
+        const nextClock = prev.virtualTimeMs + virtualDeltaMs;
+        settledClockMs = nextClock;
+        const mergedBase =
+          sharedTechs.some((t) => !prev.unlockedTechs.includes(t))
+            ? { ...prev, unlockedTechs: [...new Set([...prev.unlockedTechs, ...sharedTechs])] }
+            : prev;
         return advanceVillageSimulation(
-          prev,
-          prev.virtualTimeMs + virtualDeltaMs,
+          mergedBase,
+          nextClock,
           territory,
           spawnTile,
           continent,
         );
       });
+      if (marketStorageKey && settledClockMs > 0) {
+        syncMarketDeliveries(settledClockMs, storageKey);
+      }
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [updateSessionState, territory, spawnTile, continent, fixedSpeedFactor]);
+  }, [
+    updateSessionState,
+    territory,
+    spawnTile,
+    continent,
+    fixedSpeedFactor,
+    marketStorageKey,
+    storageKey,
+    syncMarketDeliveries,
+    readGlobalTechs,
+  ]);
 
   const calendar = useMemo(() => getCalendarState(state.virtualTimeMs), [state.virtualTimeMs]);
   const territoryFogMask = useMemo(() => new Uint8Array(state.territoryFog), [state.territoryFog]);
@@ -980,19 +1196,18 @@ export function useStoneAgeVillage({
     isAbandoned: Boolean(state.isAbandoned),
   });
 
-  const busyUnits = useMemo(() => calculateBusyUnits(state.tasks), [state.tasks]);
-
-  const freeUnits = useMemo(
-    () => ({
-      gatherer: Math.max(0, (state.units.gatherer ?? 0) - busyUnits.gatherer),
-      hunter: Math.max(0, (state.units.hunter ?? 0) - busyUnits.hunter),
-      builder: Math.max(0, (state.units.builder ?? 0) - busyUnits.builder),
-      prospector: Math.max(0, (state.units.prospector ?? 0) - busyUnits.prospector),
-      scout: Math.max(0, (state.units.scout ?? 0) - busyUnits.scout),
-      caravan: Math.max(0, (state.units.caravan ?? 0) - busyUnits.caravan),
-    }),
-    [state.units, busyUnits],
+  const busyUnits = useMemo(
+    () => calculateBusyUnits(state.tasks, state.marketEscrows),
+    [state.tasks, state.marketEscrows],
   );
+
+  const freeUnits = useMemo(() => {
+    const out = {};
+    for (const unitId of Object.keys(UNITS)) {
+      out[unitId] = Math.max(0, (state.units[unitId] ?? 0) - (busyUnits[unitId] ?? 0));
+    }
+    return out;
+  }, [state.units, busyUnits]);
 
   const farmSeedCapacity = calculateFarmSeedCapacity(state.buildings);
   const farmMaxAttachments = calculateFarmMaxAttachments(state.buildings);
@@ -1021,6 +1236,7 @@ export function useStoneAgeVillage({
         const unitDef = UNITS[unitId];
         if (!unitDef) return prev;
         if (unitId === 'prospector' && !prev.unlockedTechs.includes('bone_pickaxe')) return prev;
+        if (!unitDef.requiredTechs.every((t) => prev.unlockedTechs.includes(t))) return prev;
         const main = prev.buildings.find((b) => b.buildingId === 'main');
         if ((main?.tier ?? 1) < unitDef.tier) return prev;
         if (!Object.entries(unitDef.requiredAnimal ?? {}).every(([a, q]) => (prev.animals?.[a] ?? 0) >= q)) {
@@ -1033,7 +1249,17 @@ export function useStoneAgeVillage({
         );
         const curPopUsed = calculatePopUsed({ units: prev.units, buildings: prev.buildings });
         if (curPopUsed + unitDef.popCost > curMaxPop) return prev;
-        const unitCost = getUnitTrainingCost(unitId, prev.unlockedTechs);
+
+        const nextTiers = { ...(prev.unitTiers ?? DEFAULT_UNIT_TIERS) };
+        if (
+          unitDef.upgradeTechs?.length > 0 &&
+          (prev.units[unitId] ?? 0) === 0 &&
+          unitDef.upgradeTechs.every((t) => prev.unlockedTechs.includes(t))
+        ) {
+          nextTiers[unitId] = 3;
+        }
+
+        const unitCost = getUnitTrainingCost(unitId, prev.unlockedTechs, nextTiers);
         if (!hasEnoughResources(prev.inventory, unitCost)) return prev;
 
         const nextAnimals = { ...(prev.animals ?? {}) };
@@ -1045,11 +1271,46 @@ export function useStoneAgeVillage({
           ...prev,
           inventory: spendResources(prev.inventory, unitCost),
           animals: nextAnimals,
+          unitTiers: nextTiers,
           units: {
             ...prev.units,
             [unitId]: (prev.units[unitId] ?? 0) + 1,
           },
           logs: [`Trained 1 ${unitDef.name} (${curPopUsed + unitDef.popCost}/${curMaxPop} pop).`, ...prev.logs].slice(0, 24),
+        };
+      });
+    },
+    [updateSessionState],
+  );
+
+  const refitUnitTier = useCallback(
+    (unitId) => {
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        const unitDef = UNITS[unitId];
+        if (!unitDef) return prev;
+        const currentCount = prev.units?.[unitId] ?? 0;
+        const currentUnitTier = prev.unitTiers?.[unitId] ?? 2;
+        const rule = getUnitRefitRule({
+          unitId,
+          currentCount,
+          currentUnitTier,
+          unlockedTechs: prev.unlockedTechs,
+          inventory: prev.inventory,
+        });
+        if (!rule.allowed) return prev;
+
+        return {
+          ...prev,
+          inventory: spendResources(prev.inventory, rule.cost),
+          unitTiers: {
+            ...(prev.unitTiers ?? DEFAULT_UNIT_TIERS),
+            [unitId]: rule.targetTier,
+          },
+          logs: [
+            `Refitted ${currentCount} ${unitDef.name} division(s) to Bronze Tier.`,
+            ...prev.logs,
+          ].slice(0, 24),
         };
       });
     },
@@ -1063,7 +1324,7 @@ export function useStoneAgeVillage({
         const unitDef = UNITS[unitId];
         if (!unitDef) return prev;
 
-        const busy = calculateBusyUnits(prev.tasks);
+        const busy = calculateBusyUnits(prev.tasks, prev.marketEscrows);
         const currentCount = prev.units?.[unitId] ?? 0;
         const freeCount = Math.max(0, currentCount - (busy[unitId] ?? 0));
         if (freeCount < 1) return prev;
@@ -1593,7 +1854,7 @@ export function useStoneAgeVillage({
         const building = prev.buildings.find((b) => b.instanceId === buildingInstanceId);
         const recipe = RECIPES[recipeId];
         if (!building || building.status !== 'active' || !recipe) return prev;
-        if (building.buildingId !== recipe.buildingId) return prev;
+        if (!BUILDINGS[building.buildingId]?.craftsRecipes?.includes(recipeId)) return prev;
         if (recipe.requiredTech && !prev.unlockedTechs.includes(recipe.requiredTech)) return prev;
         const batchQty = Math.max(1, Math.floor(Number(quantity) || 1));
         const waterCost = (recipe.waterCostBowls ?? 0) * batchQty;
@@ -1650,7 +1911,7 @@ export function useStoneAgeVillage({
         const tech = TECHNOLOGIES[techId];
         if (!building || building.status !== 'active' || !tech) return prev;
         if (prev.unlockedTechs.includes(techId)) return prev;
-        if (tech.researchedAt && building.buildingId !== tech.researchedAt) return prev;
+        if (!BUILDINGS[building.buildingId]?.researchesTechs?.includes(techId)) return prev;
         if (!tech.prerequisites.every((p) => prev.unlockedTechs.includes(p))) return prev;
         if (!isTechTriggerSatisfied(techId, { builtBuildings: prev.buildings, craftedCounts: prev.craftedCounts })) {
           return prev;
@@ -2217,7 +2478,12 @@ export function useStoneAgeVillage({
     ({ animalId, count = 1 }) => {
       updateSessionState((prev) => {
         if (prev.isAbandoned) return prev;
-        const res = slaughterLivestock({ animals: prev.animals, animalId, count });
+        const res = slaughterLivestock({
+        animals: prev.animals,
+        animalId,
+        count,
+        unlockedTechs: prev.unlockedTechs,
+      });
         if (res.slaughtered <= 0) return prev;
         const maxStorage = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
         const added = addItemsWithinCapacity(prev.inventory, res.yields, maxStorage);
@@ -2271,14 +2537,179 @@ export function useStoneAgeVillage({
     });
   }, [updateSessionState]);
 
+  const createMarketOffer = useCallback(
+    ({ offerId, offerQty, requestId, requestQty }) => {
+      if (!marketStorageKey || !offerId || !requestId || offerId === requestId) return;
+      const oQty = Math.floor(Number(offerQty));
+      const rQty = Math.floor(Number(requestQty));
+      if (!Number.isFinite(oQty) || oQty <= 0 || !Number.isFinite(rQty) || rQty <= 0) return;
+
+      const unitBulk = RESOURCES[offerId]?.sizeClass ?? 2;
+      const caravanCap = UNITS.caravan?.carryCapacity ?? 150;
+      const caravansNeeded = Math.max(1, Math.ceil((oQty * unitBulk) / caravanCap));
+
+      let createdOffer = null;
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        if (!prev.buildings.some((b) => b.buildingId === 'market' && b.status === 'active')) return prev;
+        if ((prev.inventory[offerId] ?? 0) < oQty) return prev;
+        const busy = calculateBusyUnits(prev.tasks, prev.marketEscrows);
+        const freeCaravans = Math.max(0, (prev.units.caravan ?? 0) - (busy.caravan ?? 0));
+        if (freeCaravans < caravansNeeded) return prev;
+
+        const offerRecordId = `offer-${Date.now().toString(36)}-${prev.nextSeq}`;
+        createdOffer = {
+          id: offerRecordId,
+          sellerCoords: { x: spawnTile.x, y: spawnTile.y },
+          sellerStorageKey: storageKey,
+          sellerVirtualTimeMs: prev.virtualTimeMs,
+          offerId,
+          offerQty: oQty,
+          requestId,
+          requestQty: rQty,
+          caravansNeeded,
+          status: 'open',
+          buyerCoords: null,
+          buyerStorageKey: null,
+          buyerDelivered: false,
+          sellerDelivered: false,
+          startedAtMs: null,
+          arrivesAtMs: null,
+          returnsAtMs: null,
+        };
+
+        const spent = spendResources(prev.inventory, { [offerId]: oQty });
+        if ((spent[offerId] ?? 0) <= 0) delete spent[offerId];
+
+        return {
+          ...prev,
+          nextSeq: prev.nextSeq + 1,
+          inventory: spent,
+          marketEscrows: {
+            ...(prev.marketEscrows ?? {}),
+            [offerRecordId]: { caravansNeeded },
+          },
+          logs: [
+            `Posted trade offer: ${oQty} ${RESOURCES[offerId]?.name ?? offerId} for ${rQty} ${RESOURCES[requestId]?.name ?? requestId} (${caravansNeeded} Caravan escrowed).`,
+            ...prev.logs,
+          ].slice(0, 24),
+        };
+      });
+
+      if (createdOffer) {
+        const nextOffers = [createdOffer, ...loadMarketOffers(marketStorageKey)];
+        saveMarketOffers(marketStorageKey, nextOffers);
+        setMarketOffers(nextOffers);
+      }
+    },
+    [marketStorageKey, spawnTile, storageKey, updateSessionState],
+  );
+
+  const acceptMarketOffer = useCallback(
+    (offerRecordId) => {
+      if (!marketStorageKey) return;
+      const existing = loadMarketOffers(marketStorageKey);
+      const target = existing.find((o) => o.id === offerRecordId && o.status === 'open');
+      if (!target || target.sellerStorageKey === storageKey) return;
+
+      let acceptedPlan = null;
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        if (!prev.buildings.some((b) => b.buildingId === 'market' && b.status === 'active')) return prev;
+        if ((prev.inventory[target.requestId] ?? 0) < target.requestQty) return prev;
+
+        const baseClockMs = Math.max(prev.virtualTimeMs, target.sellerVirtualTimeMs ?? 0);
+        const plan = calculateMarketTradePlan({
+          from: target.sellerCoords,
+          to: spawnTile,
+          offerId: target.offerId,
+          offerQty: target.offerQty,
+          nowMs: baseClockMs,
+          efficiencyPenalty: prev.efficiencyPenalty ?? 0,
+        });
+        acceptedPlan = { ...plan, baseClockMs };
+
+        const spent = spendResources(prev.inventory, { [target.requestId]: target.requestQty });
+        if ((spent[target.requestId] ?? 0) <= 0) delete spent[target.requestId];
+
+        return {
+          ...prev,
+          virtualTimeMs: Math.max(prev.virtualTimeMs, baseClockMs),
+          inventory: spent,
+          logs: [
+            `Accepted trade from (${target.sellerCoords.x}, ${target.sellerCoords.y}): locked ${target.requestQty} ${RESOURCES[target.requestId]?.name ?? target.requestId}, Caravan en route.`,
+            ...prev.logs,
+          ].slice(0, 24),
+        };
+      });
+
+      if (acceptedPlan) {
+        const nextOffers = existing.map((o) =>
+          o.id === offerRecordId
+            ? {
+                ...o,
+                status: 'in_transit',
+                buyerCoords: { x: spawnTile.x, y: spawnTile.y },
+                buyerStorageKey: storageKey,
+                startedAtMs: acceptedPlan.baseClockMs,
+                arrivesAtMs: acceptedPlan.arrivesAtMs,
+                returnsAtMs: acceptedPlan.returnsAtMs,
+              }
+            : o,
+        );
+        saveMarketOffers(marketStorageKey, nextOffers);
+        setMarketOffers(nextOffers);
+      }
+    },
+    [marketStorageKey, spawnTile, storageKey, updateSessionState],
+  );
+
+  const cancelMarketOffer = useCallback(
+    (offerRecordId) => {
+      if (!marketStorageKey) return;
+      const existing = loadMarketOffers(marketStorageKey);
+      const target = existing.find(
+        (o) => o.id === offerRecordId && o.status === 'open' && o.sellerStorageKey === storageKey,
+      );
+      if (!target) return;
+
+      updateSessionState((prev) => {
+        const nextEscrows = { ...(prev.marketEscrows ?? {}) };
+        delete nextEscrows[offerRecordId];
+        const maxCap = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
+        const refunded = addItemsWithinCapacity(
+          prev.inventory,
+          { [target.offerId]: target.offerQty },
+          maxCap,
+        );
+        return {
+          ...prev,
+          inventory: refunded.inventory,
+          marketEscrows: nextEscrows,
+          logs: [
+            `Cancelled trade offer (${target.offerQty} ${RESOURCES[target.offerId]?.name ?? target.offerId} returned).`,
+            ...prev.logs,
+          ].slice(0, 24),
+        };
+      });
+
+      const remaining = existing.filter((o) => o.id !== offerRecordId);
+      saveMarketOffers(marketStorageKey, remaining);
+      setMarketOffers(remaining);
+    },
+    [marketStorageKey, storageKey, updateSessionState],
+  );
+
   const jumpSimulationDays = useCallback(
     (days = 1) => {
       const cleanDays = Math.max(1, Math.floor(Number(days) || 0));
+      let jumpedClockMs = 0;
       updateSessionState((prev) => {
         if (prev.isAbandoned) return prev;
+        jumpedClockMs = prev.virtualTimeMs + cleanDays * REAL_MS_PER_INGAME_DAY;
         const next = advanceVillageSimulation(
           prev,
-          prev.virtualTimeMs + cleanDays * REAL_MS_PER_INGAME_DAY,
+          jumpedClockMs,
           territory,
           spawnTile,
           continent,
@@ -2291,8 +2722,11 @@ export function useStoneAgeVillage({
           ].slice(0, 24),
         };
       });
+      if (marketStorageKey && jumpedClockMs > 0) {
+        syncMarketDeliveries(jumpedClockMs, storageKey);
+      }
     },
-    [updateSessionState, territory, spawnTile, continent],
+    [updateSessionState, territory, spawnTile, continent, marketStorageKey, storageKey, syncMarketDeliveries],
   );
 
   const grantSandboxResource = useCallback(
@@ -2354,9 +2788,11 @@ export function useStoneAgeVillage({
     starvationStage,
     busyUnits,
     freeUnits,
+    marketOffers,
     setSpeedFactor,
     resetVillage,
     trainUnit,
+    refitUnitTier,
     dismissUnit,
     removeResource,
     dispatchTileAction,
@@ -2377,6 +2813,9 @@ export function useStoneAgeVillage({
     plantOrchardAction,
     harvestOrchardAction,
     tradeMarketResources,
+    createMarketOffer,
+    acceptMarketOffer,
+    cancelMarketOffer,
     repairBuilding,
     repairAllBuildings,
     demolishBuilding,
