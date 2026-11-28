@@ -5,6 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { MemoryRouter } from 'react-router';
 import { BUILDINGS, REAL_MS_PER_INGAME_HOUR } from '@obelisk/shared';
 import BuildingModal from './components/BuildingModal.jsx';
+import TileActionMenu from './components/TileActionMenu.jsx';
 import { AppRoutes } from './App.jsx';
 import { BUILDING_COLORS } from './utils/mapColors.js';
 import {
@@ -221,7 +222,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
 
     // Right-clicking placed Main building (12, 12) opens the Building Quick Action Menu.
     fireEvent.contextMenu(territoryCanvas, { clientX: 336, clientY: 336 });
-    expect(screen.getByRole('menuitem', { name: /Open Main Village Hall/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Open Stone Camp Hall/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close action menu' }));
 
     // Right-click explored adjacent tile (13, 12) -> verify 0/All buttons, Build statuses & [Team >].
@@ -240,13 +241,12 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
 
     fireEvent.click(screen.getByRole('menuitem', { name: /Build/i }));
     const firepitBtn = screen.getByRole('button', { name: /^Firepit/i });
-    const houseBtn = screen.getByRole('button', { name: /^House/i });
+    const houseBtn = screen.getByRole('button', { name: /^Tent/i });
     expect(firepitBtn).toHaveAttribute('data-build-status', 'ready');
     expect(firepitBtn).not.toHaveTextContent(/\b(READY|GREY|RED)\b/i);
     expect(houseBtn).toHaveAttribute('data-build-status', 'grey');
     expect(houseBtn).not.toHaveTextContent(/\b(READY|GREY|RED)\b/i);
-    expect(screen.getByRole('button', { name: /^Warehouse/i })).toHaveAttribute('data-build-status', 'grey');
-    expect(screen.getByRole('button', { name: /^Drying Rack/i })).toHaveAttribute('data-build-status', 'red');
+    expect(screen.getByRole('button', { name: /^Storage Pit/i })).toHaveAttribute('data-build-status', 'grey');
     expect(screen.getByRole('button', { name: /^Clay Kiln/i })).toHaveAttribute('data-build-status', 'red');
 
     // Missing House resources (4 Straw) highlight in red inside the inspected footer.
@@ -324,7 +324,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     );
 
     expect(screen.getByText('Upgrading... (Building remains active)')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeDisabled();
+    expect(screen.getByText('Level 1/1 ·', { exact: false })).toBeInTheDocument();
 
     // Missing Fish for Cook Fish appears in red (rose-400), while Salt waterCost appears neutral.
     expect(screen.getByText('0/1 Raw Fish')).toHaveClass('text-rose-400');
@@ -703,9 +703,10 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(getCapacityHighColorClass(91, 100, 'text-amber-300')).toBe('text-orange-400');
     expect(getCapacityHighColorClass(100, 100, 'text-amber-300')).toBe('text-rose-400');
 
-    expect(getReserveLowColorClass(10, 100, 'text-emerald-300')).toBe('text-emerald-300');
-    expect(getReserveLowColorClass(9, 100, 'text-emerald-300')).toBe('text-orange-400');
-    expect(getReserveLowColorClass(0, 100, 'text-emerald-300')).toBe('text-rose-400');
+    expect(getReserveLowColorClass(30, 10, 'text-emerald-300')).toBe('text-emerald-300');
+    expect(getReserveLowColorClass(29, 10, 'text-emerald-300')).toBe('text-orange-400');
+    expect(getReserveLowColorClass(9, 10, 'text-emerald-300')).toBe('text-rose-400');
+    expect(getReserveLowColorClass(0, 0, 'text-emerald-300')).toBe('text-rose-400');
 
     vi.useFakeTimers();
 
@@ -722,7 +723,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     const foodValue = Array.from(statusHeader.querySelectorAll('strong')).find(
       (node) => node.textContent === '5',
     );
-    expect(foodValue).toHaveClass('text-orange-400');
+    expect(foodValue).toHaveClass('text-emerald-300');
 
     const territoryCanvas = screen.getByLabelText('Territory Map Canvas');
     fireEvent.mouseDown(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
@@ -740,22 +741,36 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     expect(screen.getByText('10/1 Sticks')).toBeInTheDocument();
     expect(screen.getByText('0/10')).toBeInTheDocument();
 
-    // Queue Gatherer (30,000ms virtual = 3.0s at 60x), advance 500ms (16.7% > 10% window) -> Cancel hides while task stays active.
+    // Consecutively queue 2 Gatherers -> stacks into ONE sequential queue entry (`2x Recruit Gatherer`) & Food=5 (< 6 days) turns orange.
     fireEvent.click(screen.getAllByRole('button', { name: 'Train +1' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Train +1' })[0]);
+    const foodOrange = Array.from(statusHeader.querySelectorAll('strong')).find(
+      (node) => node.textContent === '5',
+    );
+    expect(foodOrange).toHaveClass('text-orange-400');
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.getByText('Recruit Gatherer')).toBeInTheDocument();
+    expect(screen.getByText('2x Recruit Gatherer')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 
+    // After 500ms real (5,000ms virtual > 10% of 1st Gatherer), item #1 locks while waiting Gatherer #2 stays cancellable (`Cancel (1)`).
     act(() => {
       vi.advanceTimersByTime(500);
     });
-    expect(screen.getByText('Recruit Gatherer')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.getByText('2x Recruit Gatherer')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel (1)' })).toBeInTheDocument();
 
+    // At 3,000ms real (30,000ms virtual), Gatherer #1 delivers (1/1) while Gatherer #2 starts cleanly.
     act(() => {
       vi.advanceTimersByTime(2500);
     });
     expect(screen.getByText('1/1')).toHaveClass('text-emerald-400');
+    expect(screen.getByText('Recruit Gatherer')).toBeInTheDocument();
+
+    // At 6,000ms real (60,000ms virtual), Gatherer #2 finishes cleanly -> 2/2.
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.getByText('2/2')).toHaveClass('text-emerald-400');
   });
 
   it('keeps unit names white while coloring counters and maps every placeable building badge', () => {
@@ -783,5 +798,286 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     );
     expect(gathererRowLabel).toHaveClass('text-white');
     expect(gathererRowLabel.querySelector('span')).toHaveClass('text-slate-500');
+  });
+
+  it('renders Windmill multi-slot automation controls in BuildingModal', () => {
+    const setMillAutoRecipe = vi.fn();
+    const windmill = {
+      instanceId: 'wm-ui',
+      buildingId: 'windmill',
+      x: 10,
+      y: 10,
+      tier: 4,
+      level: 2,
+      status: 'active',
+      autoRecipes: ['saw_planks'],
+    };
+    const state = {
+      virtualTimeMs: 1000,
+      speedFactor: 6,
+      efficiencyPenalty: 0,
+      inventory: { wood_logs: 20 },
+      water: 10,
+      unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age', 'bronze_age', 'iron_age', 'iron_saw'],
+      unlockedBlueprints: ['blueprint_windmill'],
+      craftedCounts: {},
+      buildings: [
+        { instanceId: 'main-0', buildingId: 'main', x: 12, y: 12, tier: 4, level: 1, status: 'active' },
+        windmill,
+      ],
+      units: { builder: 1 },
+      tasks: [],
+    };
+    const territory = {
+      size: 25,
+      tiles: Array.from({ length: 625 }, () => ({ elevation: 0.78, isWater: false, buildable: true })),
+    };
+
+    render(
+      <BuildingModal
+        building={windmill}
+        state={state}
+        village={{ effectiveSpeedFactor: 6, setMillAutoRecipe }}
+        territory={territory}
+        maxPop={100}
+        popUsed={1}
+        freeUnits={{ builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Automated Mill Slots (2/3)')).toBeInTheDocument();
+    expect(screen.getByText(/Speed: 150%/)).toBeInTheDocument();
+    const slot2 = screen.getByLabelText('Auto recipe slot 2');
+    fireEvent.change(slot2, { target: { value: 'cook_meat' } });
+    expect(setMillAutoRecipe).toHaveBeenCalledWith({
+      buildingInstanceId: 'wm-ui',
+      slotIndex: 1,
+      recipeId: 'cook_meat',
+    });
+  });
+
+  it('shows building Tier upgrade options in BuildingModal and TileActionMenu and triggers tier advancement', () => {
+    const onUpgradeBuildingTier = vi.fn();
+    const firepit = {
+      instanceId: 'fp-1',
+      buildingId: 'firepit',
+      x: 11,
+      y: 12,
+      tier: 1,
+      level: 1,
+      status: 'active',
+    };
+    const state = {
+      virtualTimeMs: 1000,
+      speedFactor: 6,
+      efficiencyPenalty: 0,
+      inventory: { sticks: 10, small_stones: 10, straw: 10 },
+      water: 10,
+      unlockedTechs: ['wood_tools', 'copper_age'],
+      unlockedBlueprints: [],
+      craftedCounts: {},
+      buildings: [
+        { instanceId: 'main-0', buildingId: 'main', x: 12, y: 12, tier: 2, level: 1, status: 'active' },
+        firepit,
+      ],
+      units: { gatherer: 0, hunter: 0, builder: 1 },
+      tasks: [],
+    };
+    const territory = {
+      size: 25,
+      tiles: Array.from({ length: 625 }, () => ({ elevation: 0.5, isWater: false, buildable: true })),
+    };
+
+    const { unmount } = render(
+      <BuildingModal
+        building={firepit}
+        state={state}
+        village={{ effectiveSpeedFactor: 6 }}
+        territory={territory}
+        maxPop={10}
+        popUsed={1}
+        freeUnits={{ gatherer: 0, hunter: 0, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={onUpgradeBuildingTier}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Advance to Tier 2: Hearth & Drying Rack (Resets Lv 1)')).toBeInTheDocument();
+    const advanceBtn = screen.getByRole('button', { name: 'Advance Tier' });
+    expect(advanceBtn).toBeEnabled();
+    fireEvent.click(advanceBtn);
+    expect(onUpgradeBuildingTier).toHaveBeenCalledWith('fp-1');
+    unmount();
+
+    const onMenuTierUpgrade = vi.fn();
+    render(
+      <TileActionMenu
+        menuState={{ x: 11, y: 12, tile: territory.tiles[12 * 25 + 11], clientX: 200, clientY: 200 }}
+        buildingOptions={[]}
+        buildingOnTile={firepit}
+        villageState={state}
+        speedFactor={6}
+        inventory={state.inventory}
+        freeUnits={{ gatherer: 0, hunter: 0, builder: 1 }}
+        isExplored
+        onClose={vi.fn()}
+        onDispatchAction={vi.fn()}
+        onBuildBuilding={vi.fn()}
+        onUpgradeBuildingTier={onMenuTierUpgrade}
+      />,
+    );
+
+    const quickTierBtn = screen.getByRole('menuitem', {
+      name: /Advance to Tier 2 \(Hearth & Drying Rack\)/i,
+    });
+    expect(quickTierBtn).toBeEnabled();
+    fireEvent.click(quickTierBtn);
+    expect(onMenuTierUpgrade).toHaveBeenCalledWith('fp-1');
+  });
+
+  it('displays sequential crafting queues with Active/Queued badges and waiting-item cancellation', () => {
+    const onCancelTask = vi.fn();
+    const kiln = {
+      instanceId: 'kiln-q1',
+      buildingId: 'kiln',
+      x: 11,
+      y: 12,
+      tier: 3,
+      level: 1,
+      status: 'active',
+    };
+    const state = {
+      virtualTimeMs: 2_500, // > 10% into first Copper Ingot (0..10_000)
+      speedFactor: 6,
+      efficiencyPenalty: 0,
+      inventory: { copper_ore: 10, charcoal: 10 },
+      water: 10,
+      unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age', 'bronze_age'],
+      unlockedBlueprints: [],
+      craftedCounts: {},
+      buildings: [
+        { instanceId: 'main-0', buildingId: 'main', x: 12, y: 12, tier: 3, level: 1, status: 'active' },
+        kiln,
+      ],
+      units: { builder: 1 },
+      tasks: [
+        {
+          id: 'craft-c1',
+          kind: 'craft',
+          buildingInstanceId: 'kiln-q1',
+          recipeId: 'smelt_copper_ore',
+          quantity: 2,
+          startedAtMs: 0,
+          currentItemStartedAtMs: 0,
+          nextItemCompletedAtMs: 10_000,
+          completedAtMs: 20_000,
+        },
+        {
+          id: 'craft-b1',
+          kind: 'craft',
+          buildingInstanceId: 'kiln-q1',
+          recipeId: 'smelt_bronze_from_ore',
+          quantity: 3,
+          startedAtMs: 20_000,
+          currentItemStartedAtMs: 20_000,
+          nextItemCompletedAtMs: 40_000,
+          completedAtMs: 80_000,
+        },
+      ],
+    };
+
+    render(
+      <BuildingModal
+        building={kiln}
+        state={state}
+        village={{ effectiveSpeedFactor: 6 }}
+        territory={{ size: 25, tiles: [] }}
+        maxPop={50}
+        popUsed={1}
+        freeUnits={{ builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={vi.fn()}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+        onCancelTask={onCancelTask}
+      />,
+    );
+
+    expect(screen.getByText('Active Work Queue (Sequential)')).toBeInTheDocument();
+    expect(screen.getByText('2x Smelt Copper Ore (Charcoal)')).toBeInTheDocument();
+    expect(screen.getByText('3x Alloy Bronze Ingot (Ore)')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.getByText('Queued')).toBeInTheDocument();
+
+    const cancelWaitingBtn = screen.getByRole('button', { name: 'Cancel Queued (1)' });
+    fireEvent.click(cancelWaitingBtn);
+    expect(onCancelTask).toHaveBeenCalledWith('craft-c1');
+
+    const cancelFullWaitingBtn = screen.getByRole('button', { name: 'Cancel' });
+    fireEvent.click(cancelFullWaitingBtn);
+    expect(onCancelTask).toHaveBeenCalledWith('craft-b1');
+  });
+
+  it('opens Tier 5 Steel Age Main Hall without RangeError and supports free downgrade to Tier 4', () => {
+    const onChangeMainTier = vi.fn();
+    const steelMain = {
+      instanceId: 'main-0',
+      buildingId: 'main',
+      x: 12,
+      y: 12,
+      tier: 5,
+      level: 1,
+      status: 'active',
+    };
+    render(
+      <BuildingModal
+        building={steelMain}
+        state={{
+          virtualTimeMs: 0,
+          speedFactor: 6,
+          efficiencyPenalty: 0,
+          inventory: {},
+          water: 100,
+          unlockedTechs: ['wood_tools', 'stone_tools', 'copper_age', 'bronze_age', 'iron_age', 'steel_age'],
+          unlockedBlueprints: [],
+          craftedCounts: {},
+          buildings: [steelMain],
+          units: { gatherer: 0, hunter: 0, builder: 1 },
+          tasks: [],
+        }}
+        village={{ effectiveSpeedFactor: 6 }}
+        territory={{ size: 25, tiles: [] }}
+        maxPop={800}
+        popUsed={1}
+        freeUnits={{ gatherer: 0, hunter: 0, builder: 1 }}
+        onClose={vi.fn()}
+        onTrainUnit={vi.fn()}
+        onUpgradeBuilding={vi.fn()}
+        onUpgradeBuildingTier={vi.fn()}
+        onChangeMainTier={onChangeMainTier}
+        onStartCraft={vi.fn()}
+        onStartResearch={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Steel Capital Citadel/)).toBeInTheDocument();
+    const downgradeBtn = screen.getByRole('button', { name: 'Downgrade (Free)' });
+    fireEvent.click(downgradeBtn);
+    expect(onChangeMainTier).toHaveBeenCalledWith(4);
   });
 });

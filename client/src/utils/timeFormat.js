@@ -156,18 +156,20 @@ export function getCapacityHighColorClass(used, capacity, defaultClass = 'text-s
 }
 
 /**
- * Returns threshold color class for consumable reserves (`Food`, `Water`):
- * - `0%` (`current <= 0`): red (`text-rose-400`)
- * - `<10%` of reference capacity: orange (`text-orange-400`)
+ * Returns threshold color class for consumable reserves (`Food`, `Water`) based on days of active `popUsed`:
+ * - `0` or `< popUsed` (`< 1 day`): red (`text-rose-400`)
+ * - `< popUsed * 3` (`< 3 days`): orange (`text-orange-400`)
  * - otherwise `defaultClass`.
  *
- * @param {number} current
- * @param {number} capacity
+ * @param {number} current - Current stored Food or Water amount.
+ * @param {number} popUsed - Daily consumption based on active population.
  * @param {string} [defaultClass='text-slate-200']
  * @returns {string} Tailwind text color class.
  */
-export function getReserveLowColorClass(current, capacity, defaultClass = 'text-slate-200') {
-  if ((current ?? 0) <= 0) return 'text-rose-400';
-  if ((capacity ?? 0) > 0 && current / capacity < 0.1) return 'text-orange-400';
+export function getReserveLowColorClass(current, popUsed, defaultClass = 'text-slate-200') {
+  const safeCurrent = current ?? 0;
+  const safePop = Math.max(0, popUsed ?? 0);
+  if (safeCurrent <= 0 || safeCurrent < safePop) return 'text-rose-400';
+  if (safePop > 0 && safeCurrent < safePop * 3) return 'text-orange-400';
   return defaultClass;
 }

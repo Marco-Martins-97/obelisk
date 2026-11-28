@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   AGES,
+  AGE_TIERS,
   BUILDINGS,
   RECIPES,
   RESOURCES,
@@ -11,10 +12,13 @@ import {
   calculateBuildingRepairCost,
   calculateRepairAllCost,
   canDemolishBuilding,
+  getBuildingTierConfig,
   getBuildingTierUpgradeRule,
   getBuildingUpgradePreview,
   getEffectiveTileProtection,
   getMainTierChangeRule,
+  getTaskCancelInfo,
+  getUnitCombatStats,
   getUnitRefitRule,
   getUnitTrainingCost,
   groupBuildingRecipesByOutput,
@@ -113,9 +117,11 @@ export default function BuildingModal({
   }, [building, onClose]);
 
   const def = building ? BUILDINGS[building.buildingId] : null;
+  const activeTier = building ? (building.tier ?? def?.tier ?? 1) : 1;
+  const tierConfig = building ? getBuildingTierConfig(building.buildingId, activeTier) : null;
   const isAbandoned = Boolean(state.isAbandoned);
   const main = state.buildings.find((b) => b.buildingId === 'main') ?? building;
-  const ageLabel = building ? (AGES[(building.tier ?? 1) - 1] ?? 'stone') : 'stone';
+  const ageLabel = building ? (AGES[activeTier - 1] ?? 'stone') : 'stone';
   const activeSpeed = village?.effectiveSpeedFactor ?? state.speedFactor ?? 6;
   const effPenalty = state.efficiencyPenalty ?? 0;
   const dismissUnitFn = onDismissUnit ?? village?.dismissUnit;
@@ -136,11 +142,13 @@ export default function BuildingModal({
       )
     : null;
   const activeCraftOrResearch = building
-    ? state.tasks.filter(
-        (t) =>
-          (t.kind === 'craft' || t.kind === 'research' || t.kind === 'train_unit') &&
-          t.buildingInstanceId === building.instanceId,
-      )
+    ? state.tasks
+        .filter(
+          (t) =>
+            (t.kind === 'craft' || t.kind === 'research' || t.kind === 'train_unit') &&
+            t.buildingInstanceId === building.instanceId,
+        )
+        .sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0))
     : [];
 
   const nextLevel = (building?.level ?? 1) + 1;
@@ -152,13 +160,14 @@ export default function BuildingModal({
         buildingTier: building.tier,
         mainTier: main.tier,
         unlockedTechs: state.unlockedTechs,
+        unlockedBlueprints: state.unlockedBlueprints ?? [],
       })
     : null;
   const levelUpgradeCost = def
     ? Object.fromEntries(
-        Object.entries(def.cost).map(([id, q]) => [
+        Object.entries(tierConfig?.cost ?? def.cost).map(([id, q]) => [
           id,
-          q * (building.tier ?? def.tier) * nextLevel,
+          q * activeTier * nextLevel,
         ]),
       )
     : {};
@@ -166,16 +175,17 @@ export default function BuildingModal({
     ([id, q]) => (state.inventory[id] ?? 0) >= q,
   );
   const tierResetRule =
-    building && building.buildingId !== 'main' && building.level >= (def?.maxLevel ?? 3)
+    building && building.buildingId !== 'main' && activeTier < (def?.maxTier ?? 3)
       ? getBuildingTierUpgradeRule({ building, mainTier: main.tier })
       : null;
 
   const tierUpRule =
-    building?.buildingId === 'main'
+    building?.buildingId === 'main' && building.tier < (def?.maxTier ?? AGES.length)
       ? getMainTierChangeRule({
           currentMainTier: building.tier,
           targetMainTier: building.tier + 1,
           unlockedTechs: state.unlockedTechs,
+          hasExistingCapital: Boolean(village?.hasExistingCapital),
         })
       : null;
   const tierDownRule =
@@ -216,7 +226,11 @@ export default function BuildingModal({
       : null;
 
   const pendingTechs = def
-    ? def.researchesTechs.filter((id) => !state.unlockedTechs.includes(id))
+    ? def.researchesTechs.filter(
+        (id) =>
+          !state.unlockedTechs.includes(id) &&
+          (AGE_TIERS[TECHNOLOGIES[id]?.age] ?? 1) <= activeTier,
+      )
     : [];
   const researchedTechs = def
     ? def.researchesTechs.filter(
@@ -226,6 +240,7 @@ export default function BuildingModal({
   const recipeGroups = def
     ? groupBuildingRecipesByOutput({
         recipeIds: def.craftsRecipes,
+        buildingTier: activeTier,
         unlockedTechs: state.unlockedTechs,
         inventory: state.inventory,
         water: state.water ?? 0,
@@ -245,11 +260,11 @@ export default function BuildingModal({
           <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
             <div>
               <h2 id={titleId} className="text-base font-bold text-amber-300">
-                {def.name} · ({building.x}, {building.y})
+                {tierConfig?.name ?? def.name} · ({building.x}, {building.y})
               </h2>
               <p className="text-xs text-slate-400">
                 Tier {building.tier} (<span className="capitalize">{ageLabel} Age</span>) · Level{' '}
-                {building.level}/{def.maxLevel} ·{' '}
+                {building.level}/{tierConfig?.maxLevel ?? def.maxLevel} ·{' '}
                 <span
                   className={
                     conditionPct >= 60
@@ -468,7 +483,7 @@ export default function BuildingModal({
                         );
                         const techsOk = missingTechs.length === 0;
                         const refitRule =
-                          u.upgradeTechs?.length > 0 && curCount > 0 && curUnitTier < 3
+                          u.upgradeTechs?.length > 0 && curCount > 0
                             ? getUnitRefitRule({
                                 unitId,
                                 currentCount: curCount,
@@ -477,6 +492,17 @@ export default function BuildingModal({
                                 inventory: state.inventory,
                               })
                             : null;
+                        const showRefitRow =
+                          refitRule && refitRule.targetTier > curUnitTier && refitUnitFn;
+                        const combatStats = getUnitCombatStats(unitId, curUnitTier);
+                        const tierBadgeLabel =
+                          curUnitTier >= 5
+                            ? 'Crossbow Tier'
+                            : curUnitTier === 4
+                              ? 'Iron Tier'
+                              : curUnitTier === 3
+                                ? 'Bronze Tier'
+                                : 'Copper Tier';
                         const canTrain =
                           !isAbandoned &&
                           prosOk &&
@@ -507,12 +533,14 @@ export default function BuildingModal({
                                   {u.upgradeTechs?.length > 0 && (
                                     <span
                                       className={`rounded px-1.5 py-0.5 text-[10px] ${
-                                        curUnitTier >= 3
-                                          ? 'bg-amber-500/20 text-amber-300'
-                                          : 'bg-slate-800 text-slate-400'
+                                        curUnitTier >= 4
+                                          ? 'bg-cyan-500/20 text-cyan-300'
+                                          : curUnitTier === 3
+                                            ? 'bg-amber-500/20 text-amber-300'
+                                            : 'bg-slate-800 text-slate-400'
                                       }`}
                                     >
-                                      {curUnitTier >= 3 ? 'Bronze Tier' : 'Copper Tier'}
+                                      {tierBadgeLabel}
                                     </span>
                                   )}
                                 </div>
@@ -528,8 +556,7 @@ export default function BuildingModal({
                                   {u.attack > 0 && (
                                     <>
                                       {' · '}
-                                      Atk/Def:{' '}
-                                      {curUnitTier >= 3 ? `${u.tier3Attack}/${u.tier3Defense}` : `${u.attack}/${u.defense}`}
+                                      Atk/Def: {combatStats.attack}/{combatStats.defense}
                                     </>
                                   )}
                                   {Object.keys(unitCost).length > 0 && (
@@ -604,10 +631,10 @@ export default function BuildingModal({
                               </div>
                             </div>
 
-                            {refitRule && refitUnitFn && (
+                            {showRefitRow && (
                               <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-1.5 text-[11px]">
                                 <div className="text-amber-200">
-                                  Refit {curCount} to Bronze:{' '}
+                                  Refit {curCount} to {refitRule.targetLabel}:{' '}
                                   {refitRule.missingTechs.length > 0 ? (
                                     <span className="text-rose-400">
                                       Requires {refitRule.missingTechs.map((t) => TECHNOLOGIES[t]?.name ?? t).join(', ')}
@@ -626,7 +653,7 @@ export default function BuildingModal({
                                       : 'cursor-not-allowed bg-slate-800 text-slate-500'
                                   }`}
                                 >
-                                  Refit → Bronze
+                                  Refit → {refitRule.targetLabel}
                                 </button>
                               </div>
                             )}
@@ -653,6 +680,7 @@ export default function BuildingModal({
                         isTechTriggerSatisfied(techId, {
                           builtBuildings: state.buildings,
                           craftedCounts: state.craftedCounts,
+                          unlockedBlueprints: state.unlockedBlueprints ?? [],
                         });
                       const canAfford = Object.entries(tech.cost).every(
                         ([id, q]) => (state.inventory[id] ?? 0) >= q,
@@ -754,19 +782,25 @@ export default function BuildingModal({
                               {group.recipes.length > 1 &&
                                 group.recipes.map((variant) => {
                                   const keys = Object.keys(variant.inputs);
-                                  const viaLabel = keys.some((k) => k.includes('_ore'))
-                                    ? 'Ore'
-                                    : keys.some((k) => k.includes('_nugget'))
-                                      ? 'Nuggets'
-                                      : keys.includes('salt')
-                                        ? 'Salt'
-                                        : keys.includes('wood_ash')
-                                          ? 'Ash'
-                                          : keys.includes('flax')
-                                            ? 'Flax'
-                                            : keys.includes('straw')
-                                              ? 'Straw'
-                                              : variant.name;
+                                  const viaLabel = keys.includes('coal')
+                                    ? keys.some((k) => k.endsWith('_ore'))
+                                      ? 'Ore+Coal'
+                                      : 'Coal'
+                                    : keys.some((k) => k.includes('_ore'))
+                                      ? 'Ore'
+                                      : keys.some((k) => k.includes('_nugget'))
+                                        ? 'Nuggets'
+                                        : keys.includes('charcoal')
+                                          ? 'Charcoal'
+                                          : keys.includes('salt')
+                                            ? 'Salt'
+                                            : keys.includes('wood_ash')
+                                              ? 'Ash'
+                                              : keys.includes('flax')
+                                                ? 'Flax'
+                                                : keys.includes('straw')
+                                                  ? 'Straw'
+                                                  : variant.name;
                                   const isCurrent = variant.id === chosenRecipe.id;
                                   return (
                                     <button
@@ -898,39 +932,59 @@ export default function BuildingModal({
                 </section>
               )}
 
-              {/* Active Crafting/Research Timers inside this building */}
+              {/* Sequential Building Production / Research Queue (1 item at a time) */}
               {activeCraftOrResearch.length > 0 && (
                 <section className="rounded-lg border border-sky-800/60 bg-sky-950/30 p-2.5">
-                  <div className="font-semibold text-sky-300">Active Work Queue</div>
-                  {activeCraftOrResearch.map((t) => {
+                  <div className="font-semibold text-sky-300">Active Work Queue (Sequential)</div>
+                  {activeCraftOrResearch.map((t, idx) => {
+                    const qtyPrefix = (t.quantity ?? 1) > 1 ? `${t.quantity}x ` : '';
                     const taskLabel =
                       t.kind === 'train_unit'
-                        ? `Recruit ${UNITS[t.unitId]?.name ?? t.unitId}`
+                        ? `${qtyPrefix}Recruit ${UNITS[t.unitId]?.name ?? t.unitId}`
                         : t.recipeId
-                          ? `${t.quantity > 1 ? `${t.quantity}x ` : ''}${RECIPES[t.recipeId].name}`
+                          ? `${qtyPrefix}${RECIPES[t.recipeId].name}`
                           : TECHNOLOGIES[t.techId].name;
-                    const canCancelQueued =
-                      !isAbandoned &&
-                      cancelTaskFn &&
-                      canCancelTask(t, state.virtualTimeMs).allowed;
+                    const cancelInfo =
+                      !isAbandoned && cancelTaskFn
+                        ? getTaskCancelInfo(t, state.virtualTimeMs)
+                        : { allowed: false, cancelMode: null };
+                    const isFirstInQueue = idx === 0 && (t.startedAtMs ?? 0) <= state.virtualTimeMs;
+                    const currentItemEndMs = t.nextItemCompletedAtMs ?? t.completedAtMs;
+                    const cancelLabel =
+                      cancelInfo.cancelMode === 'waiting_only'
+                        ? `Cancel Queued (${(t.quantity ?? 1) - 1})`
+                        : 'Cancel';
                     return (
                       <div
                         key={t.id}
                         className="mt-1 flex items-center justify-between gap-2 font-mono text-[11px]"
                       >
-                        <span>{taskLabel}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${
+                              isFirstInQueue
+                                ? 'bg-amber-500/20 text-amber-300'
+                                : 'bg-slate-800 text-slate-300'
+                            }`}
+                          >
+                            {isFirstInQueue ? 'Active' : 'Queued'}
+                          </span>
+                          <span>{taskLabel}</span>
+                        </div>
                         <div className="flex items-center gap-2">
-                          {canCancelQueued && (
+                          {cancelInfo.allowed && (
                             <button
                               type="button"
                               onClick={() => cancelTaskFn(t.id)}
                               className="rounded border border-rose-700/70 bg-rose-950/70 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-900/80"
                             >
-                              Cancel
+                              {cancelLabel}
                             </button>
                           )}
                           <span>
-                            {formatRealDurationHMS(t.completedAtMs - state.virtualTimeMs, activeSpeed)}
+                            {isFirstInQueue && (t.quantity ?? 1) > 1
+                              ? `${formatRealDurationHMS(currentItemEndMs - state.virtualTimeMs, activeSpeed)} (${formatRealDurationHMS(t.completedAtMs - state.virtualTimeMs, activeSpeed)})`
+                              : formatRealDurationHMS(t.completedAtMs - state.virtualTimeMs, activeSpeed)}
                           </span>
                         </div>
                       </div>
@@ -954,7 +1008,7 @@ export default function BuildingModal({
                 <section className="flex items-center justify-between gap-2 rounded-lg border border-amber-800/70 bg-amber-950/30 p-3">
                   <div>
                     <div className="font-semibold text-amber-200">
-                      Advance Building to Tier {tierResetRule.targetTier} (Resets Lv 1)
+                      Advance to Tier {tierResetRule.targetTier}: {tierResetRule.targetName} (Resets Lv 1)
                     </div>
                     {upgradePreview?.nextTier?.summary && (
                       <div className="text-[11px] font-medium text-emerald-300">
@@ -1007,7 +1061,7 @@ export default function BuildingModal({
               )}
 
               {/* Level Upgrade */}
-              {building.level < def.maxLevel && (
+              {building.level < (tierConfig?.maxLevel ?? def.maxLevel) && (
                 <section className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                   <div>
                     <div className="font-semibold text-slate-100">Upgrade to Level {nextLevel}</div>

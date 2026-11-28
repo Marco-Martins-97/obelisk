@@ -5,9 +5,9 @@
  * All probabilistic helpers accept an explicit seeded `rng()` callback.
  */
 
-import { BUILDINGS } from '../config/buildings.js';
+import { BUILDINGS, getBuildingTierConfig } from '../config/buildings.js';
 import { PANNABLE_ORE_IDS, RESOURCES } from '../config/resources.js';
-import { AGES, STARTER_UNLOCKED_TECHS, TECHNOLOGIES } from '../config/technologies.js';
+import { AGES, AGE_TIERS, STARTER_UNLOCKED_TECHS, TECHNOLOGIES } from '../config/technologies.js';
 import { UNITS } from '../config/units.js';
 import {
   DAYS_PER_MONTH,
@@ -254,10 +254,11 @@ export function calculateStorageCapacity(buildings, inventory = {}) {
     const def = BUILDINGS[instance.buildingId];
     if (!def || def.id === 'farm') continue;
     const tier = instance.tier ?? def.tier;
-    const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
+    const maxLv = getBuildingTierConfig(def.id, tier).maxLevel;
+    const level = Math.max(1, Math.min(instance.level ?? 1, maxLv));
 
     if (def.storageTierBases) {
-      generalCapacity += calculateTierLevelValue(def.storageTierBases, tier, level, def.maxLevel);
+      generalCapacity += calculateTierLevelValue(def.storageTierBases, tier, level, maxLv);
     } else if (def.storageBonusPerLevel > 0) {
       generalCapacity += def.storageBonusPerLevel * level;
     }
@@ -267,7 +268,7 @@ export function calculateStorageCapacity(buildings, inventory = {}) {
         def.preservedStorageTierBases,
         tier,
         level,
-        def.maxLevel,
+        maxLv,
       );
       if (def.spoilageMultiplier < bestSpoilageMultiplier) {
         bestSpoilageMultiplier = def.spoilageMultiplier;
@@ -644,13 +645,14 @@ export function calculateWaterCapacity(buildings, inventory = {}) {
     const def = BUILDINGS[instance.buildingId];
     if (!def) continue;
     const tier = instance.tier ?? def.tier;
-    const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
+    const maxLv = getBuildingTierConfig(def.id, tier).maxLevel;
+    const level = Math.max(1, Math.min(instance.level ?? 1, maxLv));
 
     if (tier === 1 && Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0) {
       const idx = Math.min(level - 1, def.waterCapacityByLevel.length - 1);
       total += def.waterCapacityByLevel[idx];
     } else if (def.waterTierBases) {
-      total += calculateTierLevelValue(def.waterTierBases, tier, level, def.maxLevel);
+      total += calculateTierLevelValue(def.waterTierBases, tier, level, maxLv);
     } else if (def.waterCapacity > 0) {
       total += def.waterCapacity * level;
     }
@@ -684,9 +686,17 @@ export function getUnitTrainingCost(unitId, unlockedTechs = [], unitTiers = {}) 
       : { sticks: 1 };
   }
 
+  const explicitTier = unitTiers?.[unitId];
+  if (def.tier4TrainingCost && def.tier4UpgradeTechs?.length > 0) {
+    const hasT4Upgrades = def.tier4UpgradeTechs.every((t) => unlocked.has(t));
+    if (explicitTier >= 4 || (explicitTier === undefined && hasT4Upgrades)) {
+      return def.tier4TrainingCost;
+    }
+  }
+
   if (def.tier3TrainingCost && def.upgradeTechs?.length > 0) {
     const hasAllUpgrades = def.upgradeTechs.every((t) => unlocked.has(t));
-    if ((unitTiers?.[unitId] ?? 0) >= 3 || (unitTiers?.[unitId] === undefined && hasAllUpgrades)) {
+    if (explicitTier >= 3 || (explicitTier === undefined && hasAllUpgrades)) {
       return def.tier3TrainingCost;
     }
   }
@@ -764,10 +774,11 @@ export function calculateMaxPopulation(buildings) {
     const def = BUILDINGS[instance.buildingId];
     if (!def) continue;
     const tier = instance.tier ?? def.tier;
-    const level = Math.max(1, Math.min(instance.level ?? 1, def.maxLevel));
+    const maxLv = getBuildingTierConfig(def.id, tier).maxLevel;
+    const level = Math.max(1, Math.min(instance.level ?? 1, maxLv));
 
     if (def.popTierBases) {
-      maxPop += calculateTierLevelValue(def.popTierBases, tier, level, def.maxLevel);
+      maxPop += calculateTierLevelValue(def.popTierBases, tier, level, maxLv);
     } else if (def.popBonusPerLevel > 0) {
       maxPop += def.popBonusPerLevel * level;
     }
@@ -960,7 +971,7 @@ export function getBestUnlockedTool(unlockedTechs = STARTER_UNLOCKED_TECHS, tool
  */
 export function isTechTriggerSatisfied(
   techId,
-  { builtBuildings = [], craftedCounts = {} } = {},
+  { builtBuildings = [], craftedCounts = {}, unlockedBlueprints = [] } = {},
 ) {
   const tech = TECHNOLOGIES[techId];
   if (!tech) {
@@ -970,7 +981,12 @@ export function isTechTriggerSatisfied(
   const trigger = tech.unlockTrigger;
   if (trigger.type === 'starter') return true;
 
+  if (trigger.type === 'blueprint') {
+    return (unlockedBlueprints ?? []).includes(trigger.blueprintId);
+  }
+
   if (trigger.type === 'build') {
+    const requiredBuildingTier = AGE_TIERS[tech.age] ?? 1;
     const equivalentIds =
       trigger.buildingId === 'smithy'
         ? ['smithy', 'forge']
@@ -980,7 +996,11 @@ export function isTechTriggerSatisfied(
             ? ['kiln', 'forge']
             : [trigger.buildingId];
     const activeMatches = builtBuildings.filter(
-      (b) => equivalentIds.includes(b.buildingId) && (!b.status || b.status === 'active'),
+      (b) =>
+        equivalentIds.includes(b.buildingId) &&
+        (!b.status || b.status === 'active') &&
+        (b.tier ?? BUILDINGS[b.buildingId]?.tier ?? 1) >=
+          (trigger.buildingId === 'smithy' && requiredBuildingTier >= 3 ? requiredBuildingTier : 1),
     ).length;
     return activeMatches >= (trigger.count ?? 1);
   }
@@ -993,9 +1013,9 @@ export function isTechTriggerSatisfied(
 }
 
 /**
- * Validates whether a building can be constructed or upgraded given Main Tier & unlocked techs.
+ * Validates whether a building can be constructed or upgraded given Main Tier, unlocked techs, & blueprints.
  * Existing higher-tier buildings remain intact when Main is downgraded, but cannot upgrade
- * further until Main advances back to >= their tier. Newly constructed buildings adopt `mainTier`.
+ * further until Main advances back to >= their tier. Newly constructed buildings start at their base unlock Tier (`def.tier`).
  *
  * @param {object} params - Validation inputs.
  * @param {string} params.buildingId - Target building template ID.
@@ -1004,6 +1024,7 @@ export function isTechTriggerSatisfied(
  * @param {number} [params.buildingTier] - Existing instance tier (defaults to template base tier).
  * @param {number} [params.mainTier=1] - Current Age Tier of the village's Main building.
  * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked tech IDs.
+ * @param {string[] | Set<string>} [params.unlockedBlueprints=[]] - Player unlocked Ruin blueprint IDs.
  * @returns {{ allowed: boolean, reason: string | null, spawnTier: number }} Permission and resulting tier.
  */
 export function canBuildOrUpgradeBuilding({
@@ -1013,6 +1034,7 @@ export function canBuildOrUpgradeBuilding({
   buildingTier,
   mainTier = 1,
   unlockedTechs = STARTER_UNLOCKED_TECHS,
+  unlockedBlueprints = [],
 }) {
   const def = BUILDINGS[buildingId];
   if (!def) {
@@ -1020,8 +1042,12 @@ export function canBuildOrUpgradeBuilding({
   }
 
   const unlockedSet = new Set(unlockedTechs ?? []);
+  const blueprintSet = new Set(unlockedBlueprints ?? []);
   const effectiveTier =
-    currentLevel === 0 ? Math.min(mainTier, def.maxTier ?? mainTier) : (buildingTier ?? def.tier);
+    currentLevel === 0
+      ? def.tier
+      : (buildingTier ?? def.tier);
+  const tierConfig = getBuildingTierConfig(buildingId, effectiveTier);
 
   if (currentLevel === 0) {
     if (!def.buildable) {
@@ -1038,6 +1064,14 @@ export function canBuildOrUpgradeBuilding({
     };
   }
 
+  if (def.requiredBlueprint && !blueprintSet.has(def.requiredBlueprint)) {
+    return {
+      allowed: false,
+      reason: `Requires Ruin blueprint: ${def.requiredBlueprint}.`,
+      spawnTier: effectiveTier,
+    };
+  }
+
   const missingTech = def.requiredTechs.find((techId) => !unlockedSet.has(techId));
   if (missingTech) {
     return {
@@ -1048,17 +1082,17 @@ export function canBuildOrUpgradeBuilding({
   }
 
   if (currentLevel === 0) {
-    if (targetLevel < 1 || targetLevel > def.maxLevel) {
+    if (targetLevel < 1 || targetLevel > tierConfig.maxLevel) {
       return {
         allowed: false,
-        reason: `Invalid level ${targetLevel} (max ${def.maxLevel}).`,
+        reason: `Invalid level ${targetLevel} (max ${tierConfig.maxLevel}).`,
         spawnTier: effectiveTier,
       };
     }
-  } else if (targetLevel <= currentLevel || targetLevel > def.maxLevel) {
+  } else if (targetLevel <= currentLevel || targetLevel > tierConfig.maxLevel) {
     return {
       allowed: false,
-      reason: `Invalid upgrade target level ${targetLevel} from ${currentLevel} (max ${def.maxLevel}).`,
+      reason: `Invalid upgrade target level ${targetLevel} from ${currentLevel} (max ${tierConfig.maxLevel}).`,
       spawnTier: effectiveTier,
     };
   }
@@ -1068,12 +1102,13 @@ export function canBuildOrUpgradeBuilding({
 
 /**
  * Evaluates a village Main Age Tier transition (`downgrade` is free; `upgrade` always costs
- * normal materials and builder time once unlocked by Age trigger tech).
+ * normal materials and builder time once unlocked by Age trigger tech). Enforces max 1 upgraded Capital (Tier 5).
  *
  * @param {object} params - Main tier transition inputs.
  * @param {number} params.currentMainTier - Current village Main Tier (1..5).
  * @param {number} params.targetMainTier - Desired village Main Tier (1..5).
  * @param {string[] | Set<string>} [params.unlockedTechs=STARTER_UNLOCKED_TECHS] - Player unlocked tech IDs.
+ * @param {boolean} [params.hasExistingCapital=false] - Whether player already owns a Tier 5 Capital.
  * @returns {{
  *   allowed: boolean,
  *   direction: 'upgrade' | 'downgrade' | 'none',
@@ -1090,6 +1125,7 @@ export function getMainTierChangeRule({
   currentMainTier,
   targetMainTier,
   unlockedTechs = STARTER_UNLOCKED_TECHS,
+  hasExistingCapital = false,
 }) {
   if (
     !Number.isInteger(currentMainTier) ||
@@ -1169,6 +1205,19 @@ export function getMainTierChangeRule({
       buildersRequired: upgradeDef.buildersRequired,
       targetAge: upgradeDef.targetAge,
       reason: `Requires technology: ${missingTech}.`,
+    };
+  }
+
+  if (targetMainTier === 5 && hasExistingCapital) {
+    return {
+      allowed: false,
+      direction: 'upgrade',
+      isFree: false,
+      cost: upgradeDef.cost,
+      buildTimeHours: upgradeDef.buildTimeHours,
+      buildersRequired: upgradeDef.buildersRequired,
+      targetAge: upgradeDef.targetAge,
+      reason: 'You already own a Capital (7x7). Conquer an existing Capital to hold more than one.',
     };
   }
 
@@ -1333,6 +1382,19 @@ export function getTaskPhase(task, nowMs) {
   const returnsAtMs = task.returnsAtMs ?? task.completedAtMs;
   const totalRemainingMs = Math.max(0, returnsAtMs - nowMs);
 
+  if (typeof task.startedAtMs === 'number' && nowMs < task.startedAtMs) {
+    const itemDurationMs = Math.max(
+      0,
+      (task.nextItemCompletedAtMs ?? task.completedAtMs) - task.startedAtMs,
+    );
+    return {
+      phase: 'queued',
+      phaseLabel: 'Queued',
+      phaseRemainingMs: itemDurationMs || Math.max(0, task.startedAtMs - nowMs),
+      totalRemainingMs,
+    };
+  }
+
   if (typeof task.arrivesAtMs === 'number' && nowMs < task.arrivesAtMs) {
     return {
       phase: 'going',
@@ -1343,10 +1405,11 @@ export function getTaskPhase(task, nowMs) {
   }
 
   if (nowMs < task.completedAtMs) {
+    const itemEndMs = task.nextItemCompletedAtMs ?? task.completedAtMs;
     return {
       phase: 'doing',
       phaseLabel: 'Working',
-      phaseRemainingMs: task.completedAtMs - nowMs,
+      phaseRemainingMs: Math.max(0, itemEndMs - nowMs),
       totalRemainingMs,
     };
   }
@@ -1372,28 +1435,69 @@ export function getTaskPhase(task, nowMs) {
 export const TASK_CANCEL_WINDOW_RATIO = 0.1;
 
 /**
- * Checks whether an active task can still be cancelled cleanly within the first 10%
- * of its total virtual execution window (`startedAtMs` -> `returnsAtMs ?? completedAtMs`).
+ * Evaluates full cancellation eligibility for a task or sequential stacked queue entry.
+ * - Waiting tasks (`nowMs < currentItemStartedAtMs`) can always be cancelled in full (`'all'`).
+ * - Active single items inside their first 10% (`started` -> `nextItemCompletedAtMs`) cancel in full (`'all'`).
+ * - Multi-item consecutive stacks past the first 10% allow cancelling waiting items `2..N` (`'waiting_only'`).
+ *
+ * @param {object} task - Pending task descriptor.
+ * @param {number} [nowMs=0] - Current virtual simulation timestamp.
+ * @returns {{
+ *   allowed: boolean,
+ *   remainingCancelVirtualMs: number,
+ *   cancelMode: 'all' | 'waiting_only' | null,
+ * }} Detailed cancellation mode & remaining cancel window.
+ */
+export function getTaskCancelInfo(task, nowMs = 0) {
+  const itemStartMs = task?.currentItemStartedAtMs ?? task?.startedAtMs;
+  const itemEndMs = task?.nextItemCompletedAtMs ?? task?.returnsAtMs ?? task?.completedAtMs;
+  if (!Number.isFinite(itemStartMs) || !Number.isFinite(itemEndMs) || itemEndMs <= itemStartMs) {
+    return { allowed: false, remainingCancelVirtualMs: 0, cancelMode: null };
+  }
+
+  if (nowMs < itemStartMs) {
+    return {
+      allowed: true,
+      remainingCancelVirtualMs: Math.max(0, itemStartMs - nowMs),
+      cancelMode: 'all',
+    };
+  }
+
+  const singleTotalMs = itemEndMs - itemStartMs;
+  const windowMs = singleTotalMs * TASK_CANCEL_WINDOW_RATIO;
+  const elapsedMs = nowMs - itemStartMs;
+  if (elapsedMs >= 0 && elapsedMs <= windowMs) {
+    return {
+      allowed: true,
+      remainingCancelVirtualMs: Math.max(0, windowMs - elapsedMs),
+      cancelMode: 'all',
+    };
+  }
+
+  const remainingQty = Math.max(1, Math.floor(task?.quantity ?? 1));
+  if (remainingQty > 1 && Number.isFinite(task?.completedAtMs) && nowMs < task.completedAtMs) {
+    return {
+      allowed: true,
+      remainingCancelVirtualMs: Math.max(0, task.completedAtMs - itemEndMs),
+      cancelMode: 'waiting_only',
+    };
+  }
+
+  return { allowed: false, remainingCancelVirtualMs: 0, cancelMode: null };
+}
+
+/**
+ * Checks whether an active or queued task can still be cancelled (`'all'` or `'waiting_only'`).
  *
  * @param {object} task - Pending task descriptor.
  * @param {number} [nowMs=0] - Current virtual simulation timestamp.
  * @returns {{ allowed: boolean, remainingCancelVirtualMs: number }} Cancellation eligibility & window left.
  */
 export function canCancelTask(task, nowMs = 0) {
-  const startMs = task?.startedAtMs;
-  const endMs = task?.returnsAtMs ?? task?.completedAtMs;
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    return { allowed: false, remainingCancelVirtualMs: 0 };
-  }
-
-  const totalMs = endMs - startMs;
-  const windowMs = totalMs * TASK_CANCEL_WINDOW_RATIO;
-  const elapsedMs = nowMs - startMs;
-  const allowed = elapsedMs >= 0 && elapsedMs <= windowMs;
-
+  const info = getTaskCancelInfo(task, nowMs);
   return {
-    allowed,
-    remainingCancelVirtualMs: allowed ? Math.max(0, windowMs - elapsedMs) : 0,
+    allowed: info.allowed,
+    remainingCancelVirtualMs: info.remainingCancelVirtualMs,
   };
 }
 
@@ -1585,7 +1689,8 @@ export function rollForestPredatorEncounter({ units = {}, unlockedTechs = [], rn
     Math.max(0, Math.floor(units.spearman ?? 0)) +
     Math.max(0, Math.floor(units.swordsman ?? 0)) +
     Math.max(0, Math.floor(units.archer ?? 0)) +
-    Math.max(0, Math.floor(units.cavalry ?? 0));
+    Math.max(0, Math.floor(units.cavalry ?? 0)) +
+    Math.max(0, Math.floor(units.knight ?? 0));
   const roll = rng();
   const predator = roll < 0.04 ? 'bear' : roll < 0.14 ? 'wolf' : null;
   if (!predator) {
@@ -1616,6 +1721,7 @@ export function rollForestPredatorEncounter({ units = {}, unlockedTechs = [], rn
     hunters === 1 &&
     !unlocked.has('copper_spear') &&
     !unlocked.has('bronze_spear') &&
+    !unlocked.has('iron_spear') &&
     rng() < 0.2
       ? 1
       : 0;
@@ -1917,9 +2023,10 @@ export function pickStarterSpawnTile(continent, seed = 'obelisk-alpha', excluded
   const maxY = Math.max(minY, Math.ceil(size * 0.7) - 1);
   const excludedSet = new Set((excludedCoords ?? []).map((c) => `${c.x},${c.y}`));
 
-  const isEligible = (tile, ignoreExcluded = false) =>
+  const isEligible = (tile, ignoreExcluded = false, allowRuin = false) =>
     Boolean(tile?.buildable) &&
     !tile.isObelisk &&
+    (allowRuin || !tile.isRuin) &&
     !(obeliskCoords && tile.x === obeliskCoords.x && tile.y === obeliskCoords.y) &&
     (ignoreExcluded || !excludedSet.has(`${tile.x},${tile.y}`));
 
@@ -1931,7 +2038,9 @@ export function pickStarterSpawnTile(continent, seed = 'obelisk-alpha', excluded
       ? bandCandidates
       : tiles.filter((t) => isEligible(t)).length > 0
         ? tiles.filter((t) => isEligible(t))
-        : tiles.filter((t) => isEligible(t, true));
+        : tiles.filter((t) => isEligible(t, false, true)).length > 0
+          ? tiles.filter((t) => isEligible(t, false, true))
+          : tiles.filter((t) => isEligible(t, true, true));
 
   if (pool.length === 0) {
     throw new Error('No buildable non-Obelisk Continent tile available for starter spawn.');

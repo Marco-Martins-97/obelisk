@@ -235,7 +235,7 @@ export function generateTerritory(
         : center.biome === 'taiga'
           ? 0.55
           : center.biome === 'savanna' || center.biome === 'grassland'
-            ? 0.28
+            ? 0.42
             : 0.05;
 
   const maxCoord = Math.max(1, size - 1);
@@ -419,26 +419,71 @@ export function generateTerritory(
     t.moisture = t.isWater ? 1 : clamp01(waterProximity * 0.88 + localJitter);
   }
 
-  // Guarantee at least 1 forest tile per territory outside water and the settlement zone.
-  let hasForest = false;
-  let bestForestCandidateIdx = -1;
-  let bestForestScore = -1;
+  // Guarantee at least 1 buildable forest tile overall AND at least 1 on the immediate
+  // 9x9 ring surrounding the 7x7 settlement zone when halfFootprint > 0.
+  let hasBuildableForest = false;
+  let hasRingBuildableForest = halfFootprint <= 0;
+  let bestLandIdx = -1;
+  let bestLandScore = -1;
+  let bestRingLandIdx = -1;
+  let bestRingLandScore = -1;
+  let highestRingWaterIdx = -1;
+  let highestRingWaterElev = -Infinity;
 
   for (let i = 0; i < tiles.length; i += 1) {
     const t = tiles[i];
-    if (t.isWater || t.inSettlementZone) continue;
-    if (t.forestDensity >= TERRITORY_FOREST_THRESHOLD) {
-      hasForest = true;
-      break;
+    if (t.inSettlementZone) continue;
+
+    const ringDist = Math.max(Math.abs(t.x - centerCoord), Math.abs(t.y - centerCoord));
+    const onFrontierRing = halfFootprint > 0 && ringDist === halfFootprint + 1;
+
+    if (t.isWater) {
+      if (onFrontierRing && t.elevation > highestRingWaterElev) {
+        highestRingWaterElev = t.elevation;
+        highestRingWaterIdx = i;
+      }
+      continue;
     }
-    if (t.forestDensity >= bestForestScore) {
-      bestForestScore = t.forestDensity;
-      bestForestCandidateIdx = i;
+
+    if (t.buildable) {
+      if (t.forestDensity >= TERRITORY_FOREST_THRESHOLD) {
+        hasBuildableForest = true;
+        if (onFrontierRing) {
+          hasRingBuildableForest = true;
+        }
+      }
+      if (t.forestDensity >= bestLandScore) {
+        bestLandScore = t.forestDensity;
+        bestLandIdx = i;
+      }
+      if (onFrontierRing && t.forestDensity >= bestRingLandScore) {
+        bestRingLandScore = t.forestDensity;
+        bestRingLandIdx = i;
+      }
     }
   }
 
-  if (!hasForest && bestForestCandidateIdx !== -1) {
-    tiles[bestForestCandidateIdx].forestDensity = 0.65;
+  if (!hasRingBuildableForest && halfFootprint > 0) {
+    let targetIdx = bestRingLandIdx;
+    if (targetIdx === -1 && highestRingWaterIdx !== -1 && waterCount > 1) {
+      targetIdx = highestRingWaterIdx;
+      tiles[targetIdx].isWater = false;
+      tiles[targetIdx].waterType = null;
+      waterCount -= 1;
+    }
+    if (targetIdx !== -1) {
+      tiles[targetIdx].elevation = Math.max(
+        ELEVATION_BANDS.SEA_LEVEL,
+        Math.min(ELEVATION_BANDS.MOUNTAIN_LEVEL - 0.01, tiles[targetIdx].elevation),
+      );
+      tiles[targetIdx].buildable = true;
+      tiles[targetIdx].forestDensity = Math.max(0.65, tiles[targetIdx].forestDensity);
+      hasBuildableForest = true;
+    }
+  }
+
+  if (!hasBuildableForest && bestLandIdx !== -1) {
+    tiles[bestLandIdx].forestDensity = Math.max(0.65, tiles[bestLandIdx].forestDensity);
   }
 
   return {

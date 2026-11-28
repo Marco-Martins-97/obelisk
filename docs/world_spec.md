@@ -19,7 +19,7 @@ Generates the `N×N` world map from `masterWorldSeed` using multi-octave seeded 
 - **Moisture:** Noise-driven regional humidity (used for continent biomes and territory river prevalence).
 - **Single-Layer Rock Strata (TFC-inspired):** Seeded, domain-warped Voronoi provinces guaranteeing all 7 stone types (`limestone`, `shale`, `granite`, `gabbro`, `basalt`, `slate`, `marble`) generate across the continent.
 - **Biomes:** Derived from `(elevation, temperature, moisture)` lookup matrix (`classifyBiome`).
-- **The Obelisk:** Exactly **1** unique tile placed deterministically on a buildable land tile (never ocean or mountain), marked as `isObelisk: true`.
+- **The Obelisk & 50 Ruins:** Exactly **1** unique Obelisk tile (`isObelisk: true`) plus **50** deterministic Ruins (`isRuin: true`) placed on buildable non-Obelisk land tiles. Ruins can be looted repeatedly for treasure and yield up to **1** of each unique Blueprint (`blueprint_crossbow`, `blueprint_windmill`, `blueprint_watermill`).
 
 ### Territory Generator (`territoryGenerator.js`)
 Generates an `M×M` regional grid from `(tileSeed, worldTileContext)`:

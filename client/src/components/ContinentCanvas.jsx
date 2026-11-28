@@ -159,6 +159,8 @@ export default function ContinentCanvas({
           drawSurfaceTile(ctx, tile.biome, dx, dy, Math.max(w, h));
           if (tile.isObelisk) {
             drawGameplayMarker(ctx, 'obelisk', dx, dy, Math.max(w, h));
+          } else if (tile.isRuin) {
+            drawGameplayMarker(ctx, 'ruin', dx, dy, Math.max(w, h));
           }
         } else {
           ctx.fillStyle = getDevTileColor(tile, continentLayer);
@@ -171,6 +173,10 @@ export default function ContinentCanvas({
 
           if (showObelisk && tile.isObelisk) {
             ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(dx + 1, dy + 1, Math.max(2, w - 2), Math.max(2, h - 2));
+          } else if (tile.isRuin) {
+            ctx.strokeStyle = '#c084fc';
             ctx.lineWidth = 2;
             ctx.strokeRect(dx + 1, dy + 1, Math.max(2, w - 2), Math.max(2, h - 2));
           }
@@ -435,6 +441,7 @@ export default function ContinentCanvas({
                   · {hoveredTile.biome}
                   {viewMode === 'dev' && ` · ${hoveredTile.rockType}`}
                   {hoveredTile.isObelisk && ' · ★'}
+                  {hoveredTile.isRuin && ' · Ruin'}
                 </>
               )}
               {(abandonedCoords ?? []).some((a) => a.x === hoveredTile.x && a.y === hoveredTile.y) &&

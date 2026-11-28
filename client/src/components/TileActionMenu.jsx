@@ -6,6 +6,8 @@ import {
   calculateRepairAllCost,
   canBuildOrUpgradeBuilding,
   canDemolishBuilding,
+  getBuildingTierConfig,
+  getBuildingTierUpgradeRule,
   groupBuildingRecipesByOutput,
 } from '@obelisk/shared';
 import CostInline from './CostInline.jsx';
@@ -147,6 +149,7 @@ export default function TileActionMenu({
   onRepairBuilding,
   onRepairAllBuildings,
   onUpgradeBuilding,
+  onUpgradeBuildingTier,
   onDemolishBuilding,
   onQuickCraft,
   onQuickHarvest,
@@ -246,6 +249,8 @@ export default function TileActionMenu({
       ) : buildingOnTile && !showTileActions ? (
         (() => {
           const bDef = BUILDINGS[buildingOnTile.buildingId];
+          const bTier = buildingOnTile.tier ?? bDef?.tier ?? 1;
+          const bTierCfg = getBuildingTierConfig(buildingOnTile.buildingId, bTier);
           const cond = Math.round(buildingOnTile.condition ?? 100);
           const repairCost = calculateBuildingRepairCost(buildingOnTile);
           const needsRepair = Object.keys(repairCost).length > 0;
@@ -273,27 +278,38 @@ export default function TileActionMenu({
                 buildingTier: buildingOnTile.tier,
                 mainTier: mainBld?.tier ?? 1,
                 unlockedTechs: villageState?.unlockedTechs ?? [],
+                unlockedBlueprints: villageState?.unlockedBlueprints ?? [],
               })
             : { allowed: false };
           const upgCost = bDef
             ? Object.fromEntries(
-                Object.entries(bDef.cost ?? {}).map(([id, q]) => [
+                Object.entries(bTierCfg.cost ?? {}).map(([id, q]) => [
                   id,
-                  q * (buildingOnTile.tier ?? bDef.tier) * nextLv,
+                  q * bTier * nextLv,
                 ]),
               )
             : {};
           const canQuickUpgrade =
             buildingOnTile.status === 'active' &&
-            buildingOnTile.level < (bDef?.maxLevel ?? 3) &&
+            buildingOnTile.level < bTierCfg.maxLevel &&
             upgRule.allowed &&
             (freeUnits.builder ?? 0) >= 1 &&
             Object.entries(upgCost).every(([id, q]) => (inventory[id] ?? 0) >= q);
+
+          const tierUpRule =
+            buildingOnTile.buildingId !== 'main' && bTier < (bDef?.maxTier ?? 3)
+              ? getBuildingTierUpgradeRule({ building: buildingOnTile, mainTier: mainBld?.tier ?? 1 })
+              : null;
+          const canQuickTierUpgrade =
+            Boolean(tierUpRule?.allowed) &&
+            (freeUnits.builder ?? 0) >= (tierUpRule?.buildersRequired ?? 1) &&
+            Object.entries(tierUpRule?.cost ?? {}).every(([id, q]) => (inventory[id] ?? 0) >= q);
 
           const craftableGroup =
             buildingOnTile.status === 'active' && bDef?.craftsRecipes?.length > 0
               ? groupBuildingRecipesByOutput({
                   recipeIds: bDef.craftsRecipes,
+                  buildingTier: bTier,
                   unlockedTechs: villageState?.unlockedTechs ?? [],
                   inventory,
                   water: villageState?.water ?? 0,
@@ -326,9 +342,9 @@ export default function TileActionMenu({
           return (
             <div className="flex flex-col gap-1.5">
               <div className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5">
-                <div className="font-semibold text-amber-200">{bDef?.name}</div>
+                <div className="font-semibold text-amber-200">{bTierCfg.name}</div>
                 <div className="text-[11px] text-slate-400">
-                  T{buildingOnTile.tier} L{buildingOnTile.level} · Condition {cond}%
+                  T{buildingOnTile.tier} L{buildingOnTile.level}/{bTierCfg.maxLevel} · Condition {cond}%
                 </div>
               </div>
 
@@ -342,7 +358,7 @@ export default function TileActionMenu({
                   }}
                   className="rounded bg-amber-500 px-2 py-1.5 text-left font-semibold text-slate-950 hover:bg-amber-400"
                 >
-                  Open {bDef?.name}
+                  Open {bTierCfg.name}
                 </button>
               )}
 
@@ -425,7 +441,7 @@ export default function TileActionMenu({
                 </button>
               )}
 
-              {buildingOnTile.level < (bDef?.maxLevel ?? 3) && onUpgradeBuilding && (
+              {buildingOnTile.level < bTierCfg.maxLevel && onUpgradeBuilding && (
                 <button
                   type="button"
                   role="menuitem"
@@ -445,6 +461,34 @@ export default function TileActionMenu({
                     <CostInline cost={upgCost} inventory={inventory} /> ·{' '}
                     {formatRealHoursHMS(bDef?.buildTimeHours ?? 0, activeSpeed, effPenalty)}
                   </div>
+                </button>
+              )}
+
+              {tierUpRule && onUpgradeBuildingTier && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!canQuickTierUpgrade}
+                  onClick={() => {
+                    onUpgradeBuildingTier(buildingOnTile.instanceId);
+                    onClose();
+                  }}
+                  className={`rounded border px-2 py-1.5 text-left font-semibold ${
+                    canQuickTierUpgrade
+                      ? 'border-amber-600/70 bg-slate-900 text-amber-200 hover:bg-slate-800'
+                      : 'cursor-not-allowed border-slate-800 bg-slate-950 text-slate-500'
+                  }`}
+                >
+                  <div>
+                    Advance to Tier {tierUpRule.targetTier} ({tierUpRule.targetName})
+                  </div>
+                  <div className="text-[10px] font-normal text-slate-400">
+                    <CostInline cost={tierUpRule.cost} inventory={inventory} /> ·{' '}
+                    {formatRealHoursHMS(tierUpRule.buildTimeHours, activeSpeed, effPenalty)}
+                  </div>
+                  {!tierUpRule.allowed && (
+                    <div className="text-[10px] font-normal text-rose-400">{tierUpRule.reason}</div>
+                  )}
                 </button>
               )}
 

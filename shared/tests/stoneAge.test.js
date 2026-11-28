@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BLUEPRINT_IDS,
+  BLUEPRINTS,
   BUILDING_LIST,
   BUILDINGS,
   CITY_SIZE_BY_MAIN_TIER,
+  COLONY_STARTER_COST,
+  COLONY_STARTER_INVENTORY,
   CROPS,
   DAYS_PER_MONTH,
   DAYS_PER_SEASON,
@@ -31,12 +35,15 @@ import {
   advanceCropFieldsAndOrchards,
   advanceDailyBuildingDegradation,
   advanceDailyLivestock,
+  advanceMillAutoCrafting,
   advanceStarvationState,
   applyDailySpoilage,
   buildProspectionReport,
   calculateAnimalPenCapacity,
   calculateBuildTimestamps,
   calculateBuildingRepairCost,
+  calculateColonizationPlan,
+  calculateConquerAbandonedPlan,
   calculateContinentExpeditionPlan,
   calculateDailySurvival,
   calculateFarmMaxAttachments,
@@ -73,6 +80,7 @@ import {
   getAmbientTemperatureCelsius,
   getBestUnlockedTool,
   getBuildingDailyProduction,
+  getBuildingTierConfig,
   getBuildingTierUpgradeRule,
   getBuildingUpgradePreview,
   getCalendarState,
@@ -80,8 +88,12 @@ import {
   getEffectiveTileProtection,
   getExploredBounds,
   getMainTierChangeRule,
+  getMillEfficiencyMultiplier,
+  getMillSlotCount,
   getStarvationStageInfo,
+  getTaskCancelInfo,
   getTaskPhase,
+  getUnitCombatStats,
   getUnitRefitRule,
   getUnitTrainingCost,
   getVillageDailyProductionSummary,
@@ -257,7 +269,7 @@ describe('Technology tree triggers, tool modifiers & Main Tier/Level Age control
       mainTier: 2,
       unlockedTechs: ['wood_tools', 'stone_tools'],
     });
-    expect(kilnReady).toEqual({ allowed: true, reason: null, spawnTier: 2 });
+    expect(kilnReady).toEqual({ allowed: true, reason: null, spawnTier: 1 });
 
     // Existing Tier 2 house cannot upgrade while Main is downgraded to Tier 1.
     const downgradedHouseUpgrade = canBuildOrUpgradeBuilding({
@@ -689,7 +701,8 @@ describe('Storage pooling (M1), FEFO auto-eating (C1), fractional spoilage (S1),
 
     expect(BUILDINGS.warehouse.requiredTechs).toEqual([]);
     expect(BUILDINGS.warehouse.cost).toEqual({ sticks: 8, pelts: 4, straw: 6 });
-    expect(BUILDINGS.drying_rack.requiredTechs).toEqual(['stone_tools']);
+    expect(getBuildingTierConfig('firepit', 1).maxLevel).toBe(1);
+    expect(getBuildingTierConfig('firepit', 2).name).toBe('Hearth & Drying Rack');
     expect(RECIPES.boil_salt.waterCostBowls).toBe(10);
     expect(RECIPES.boil_salt.outputs).toEqual({ salt: 2 });
     expect(RECIPES.salt_meat.inputs).toEqual({ meat: 1, salt: 1 });
@@ -837,8 +850,8 @@ describe('Storage pooling (M1), FEFO auto-eating (C1), fractional spoilage (S1),
     expect(sickWater.waterBowls).toBe(2);
   });
 
-  it('uses basic materials for Main/House/Warehouse/Drying Rack, scales Main water capacity by level, and trims starved units evenly', () => {
-    for (const id of ['main', 'house', 'warehouse', 'drying_rack']) {
+  it('uses basic materials for Main/House/Warehouse, scales Main water capacity by level, and trims starved units evenly', () => {
+    for (const id of ['main', 'house', 'warehouse']) {
       expect(Object.keys(BUILDINGS[id].cost).every((res) => ['sticks', 'pelts', 'straw'].includes(res))).toBe(true);
     }
     expect(BUILDINGS.firepit.cost.small_stones).toBeGreaterThan(0);
@@ -1224,20 +1237,22 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
 
     const kilnGroups = groupBuildingRecipesByOutput({
       recipeIds: BUILDINGS.kiln.craftsRecipes,
+      buildingTier: 2,
       unlockedTechs: ['stone_tools', 'clay_vessels'],
-      inventory: { copper_ore: 10, copper_nugget: 20, charcoal: 5, clay: 4, sticks: 4 },
+      inventory: { copper_ore: 10, copper_nugget: 20, charcoal: 5, coal: 2, clay: 4, sticks: 4 },
     });
     const copperGroup = kilnGroups.find((g) => g.primaryOutputId === 'copper_ingot');
-    expect(copperGroup.recipes).toHaveLength(2);
+    expect(copperGroup.recipes).toHaveLength(3);
     expect(copperGroup.activeRecipe.id).toBe('smelt_copper_ore');
   });
 
-  it('implements Bronze Age legacy maxTier: 2 caps, non-stacking 3x3 Watchtowers, Option B Refits, Leather/Tools, Ships & Caravan Trade', () => {
-    // Legacy workshops are capped at Tier 2 and spawn at Tier 2 even when Main is Tier 3.
-    expect(BUILDINGS.firepit.maxTier).toBe(2);
-    expect(BUILDINGS.kiln.maxTier).toBe(2);
-    expect(BUILDINGS.drying_rack.maxTier).toBe(2);
-    expect(BUILDINGS.smithy.maxTier).toBe(2);
+  it('implements multi-tier building evolution, Watchtower 3x3 aura, Option B Refits, Leather/Tools, Ships & Caravan Trade', () => {
+    // Evolving buildings spawn at their base unlock Tier so they advance tier-by-tier cleanly.
+    expect(BUILDINGS.firepit.maxTier).toBe(4);
+    expect(BUILDINGS.kiln.maxTier).toBe(4);
+    expect(BUILDINGS.smithy.maxTier).toBe(4);
+    expect(BUILDINGS.watchtower.tier).toBe(3);
+    expect(BUILDINGS.watchtower.maxTier).toBe(5);
     expect(
       canBuildOrUpgradeBuilding({
         buildingId: 'kiln',
@@ -1246,11 +1261,39 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
         mainTier: 3,
         unlockedTechs: ['wood_tools', 'stone_tools'],
       }).spawnTier,
-    ).toBe(2);
+    ).toBe(1);
+    expect(
+      canBuildOrUpgradeBuilding({
+        buildingId: 'watchtower',
+        currentLevel: 0,
+        targetLevel: 1,
+        mainTier: 4,
+        unlockedTechs: ['stone_spear', 'bronze_age'],
+      }).spawnTier,
+    ).toBe(3);
+
+    // Buildings can advance Tier from any level (resetting to Lv 1) whenever Main >= targetTier.
+    const earlyTierRule = getBuildingTierUpgradeRule({
+      building: { buildingId: 'kiln', tier: 1, level: 1, status: 'active' },
+      mainTier: 2,
+    });
+    expect(earlyTierRule.allowed).toBe(true);
+    expect(earlyTierRule.targetName).toBe('Brick Kiln');
+    expect(earlyTierRule.cost.wood_logs).toBe(6);
+
+    const lockedMainTierRule = getBuildingTierUpgradeRule({
+      building: { buildingId: 'kiln', tier: 1, level: 1, status: 'active' },
+      mainTier: 1,
+    });
+    expect(lockedMainTierRule.allowed).toBe(false);
+    expect(lockedMainTierRule.targetName).toBe('Brick Kiln');
+    expect(lockedMainTierRule.reason).toBe('Requires Main Tier 2.');
+    expect(lockedMainTierRule.cost.wood_logs).toBe(6);
+
     expect(
       getBuildingTierUpgradeRule({
-        building: { buildingId: 'kiln', tier: 2, level: 3, status: 'active' },
-        mainTier: 3,
+        building: { buildingId: 'kiln', tier: 4, level: 3, status: 'active' },
+        mainTier: 4,
       }).allowed,
     ).toBe(false);
 
@@ -1400,6 +1443,31 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
     const expeditionTask = { startedAtMs: 0, completedAtMs: 4000, returnsAtMs: 10000 };
     expect(canCancelTask(expeditionTask, 1000).allowed).toBe(true);
     expect(canCancelTask(expeditionTask, 1001).allowed).toBe(false);
+
+    // Consecutive multi-item queue: item #1 locks after 10%, while unstarted items 2..N stay cancellable (`waiting_only`).
+    const stackedQueueTask = {
+      kind: 'craft',
+      quantity: 3,
+      startedAtMs: 0,
+      currentItemStartedAtMs: 0,
+      nextItemCompletedAtMs: 10_000,
+      completedAtMs: 30_000,
+    };
+    expect(getTaskCancelInfo(stackedQueueTask, 500).cancelMode).toBe('all');
+    expect(getTaskCancelInfo(stackedQueueTask, 1_500)).toMatchObject({
+      allowed: true,
+      cancelMode: 'waiting_only',
+    });
+    const waitingQueueTask = {
+      kind: 'craft',
+      quantity: 2,
+      startedAtMs: 30_000,
+      currentItemStartedAtMs: 30_000,
+      nextItemCompletedAtMs: 40_000,
+      completedAtMs: 50_000,
+    };
+    expect(getTaskCancelInfo(waitingQueueTask, 1_500).cancelMode).toBe('all');
+    expect(getTaskPhase(waitingQueueTask, 1_500).phase).toBe('queued');
   });
 
   it('scales dynamic City footprint by Main Tier and scopes City Wall protection to active city tiles', () => {
@@ -1438,5 +1506,273 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
     expect(insideProt.wallDefense).toBe(45);
     expect(outsideProt.wallDefense).toBe(0);
     expect(outsideProt.defensePercent).toBe(0);
+  });
+
+  it('implements Stage 6 Iron Age: evolving buildings, Coal/Steel smelting, Iron/Crossbow refits, Mills, Ruins, Colonization, Abandoned Conquest & Capital cap', () => {
+    // 1. Evolving building names & maxLevel overrides (Tent->Brick House, Firepit T1 maxLevel 1 -> T2 Hearth -> T3 Smokehouse -> T4 Bakery).
+    expect(getBuildingTierConfig('house', 1).name).toBe('Tent');
+    expect(getBuildingTierConfig('house', 2).name).toBe('Hut');
+    expect(getBuildingTierConfig('house', 3).name).toBe('Wood House');
+    expect(getBuildingTierConfig('house', 4).name).toBe('Stone House');
+    expect(getBuildingTierConfig('house', 5).name).toBe('Brick House');
+    expect(getBuildingTierConfig('firepit', 1).maxLevel).toBe(1);
+    expect(getBuildingTierConfig('firepit', 2).maxLevel).toBe(3);
+    expect(getBuildingTierConfig('kiln', 3).name).toBe('Bloomery Furnace');
+    expect(getBuildingTierConfig('kiln', 4).name).toBe('Blast Furnace');
+    expect(getBuildingTierConfig('smithy', 4).name).toBe('Iron Blacksmith');
+
+    // Firepit Tier 1 cannot upgrade to Lv 2, but can advance to Tier 2 (Hearth) when Main >= Tier 2.
+    expect(
+      canBuildOrUpgradeBuilding({
+        buildingId: 'firepit',
+        currentLevel: 1,
+        targetLevel: 2,
+        buildingTier: 1,
+        mainTier: 2,
+      }).allowed,
+    ).toBe(false);
+    expect(
+      getBuildingTierUpgradeRule({
+        building: { buildingId: 'firepit', tier: 1, level: 1, status: 'active' },
+        mainTier: 2,
+      }).allowed,
+    ).toBe(true);
+
+    // 2. Coal/Charcoal smelting & Steel Age trigger.
+    expect(RECIPES.smelt_steel_ingot_coal.unlocksTech).toBe('steel_age');
+    expect(RECIPES.smelt_steel_ingot_charcoal.unlocksTech).toBe('steel_age');
+    expect(
+      isTechTriggerSatisfied('steel_age', { craftedCounts: { steel_ingot: 1 } }),
+    ).toBe(true);
+
+    // 3. Capital (7x7 Tier 5) limit: allowed if 0 existing Capitals, blocked if player already owns a Capital.
+    const steelTechs = ['wood_tools', 'stone_tools', 'copper_age', 'bronze_age', 'iron_age', 'steel_age'];
+    expect(
+      getMainTierChangeRule({
+        currentMainTier: 4,
+        targetMainTier: 5,
+        unlockedTechs: steelTechs,
+        hasExistingCapital: false,
+      }).allowed,
+    ).toBe(true);
+    expect(
+      getMainTierChangeRule({
+        currentMainTier: 4,
+        targetMainTier: 5,
+        unlockedTechs: steelTechs,
+        hasExistingCapital: true,
+      }).allowed,
+    ).toBe(false);
+
+    // 4. Multi-tier refits (Archer T2 -> T3 -> T4 Longbow -> T5 Crossbow) & Iron units (Knight, Wagon, Merchant Ship).
+    expect(
+      isTechTriggerSatisfied('crossbow', { unlockedBlueprints: [] }),
+    ).toBe(false);
+    expect(
+      isTechTriggerSatisfied('crossbow', { unlockedBlueprints: ['blueprint_crossbow'] }),
+    ).toBe(true);
+    const archerToCrossbow = getUnitRefitRule({
+      unitId: 'archer',
+      currentCount: 4,
+      currentUnitTier: 4,
+      unlockedTechs: ['crossbow'],
+      inventory: { iron_ingot: 10, planks: 10, rope: 10 },
+    });
+    expect(archerToCrossbow.allowed).toBe(true);
+    expect(archerToCrossbow.targetTier).toBe(5);
+    expect(archerToCrossbow.targetLabel).toBe('Crossbow');
+    expect(getUnitCombatStats('archer', 5).attack).toBe(42);
+    expect(UNITS.knight.popCost).toBe(2);
+    expect(UNITS.wagon.carryCapacity).toBe(400);
+    expect(UNITS.merchant_ship.carryCapacity).toBe(1000);
+
+    // 5. Blueprint-gated Windmill (50%..150% elevation scaling) & Watermill (100% stable), 1 slot per level.
+    expect(
+      canBuildOrUpgradeBuilding({
+        buildingId: 'windmill',
+        currentLevel: 0,
+        mainTier: 4,
+        unlockedTechs: ['iron_saw'],
+        unlockedBlueprints: [],
+      }).allowed,
+    ).toBe(false);
+    expect(
+      canBuildOrUpgradeBuilding({
+        buildingId: 'windmill',
+        currentLevel: 0,
+        mainTier: 4,
+        unlockedTechs: ['iron_saw'],
+        unlockedBlueprints: ['blueprint_windmill'],
+      }).allowed,
+    ).toBe(true);
+
+    expect(getMillEfficiencyMultiplier({ buildingId: 'windmill' }, { elevation: 0.38 })).toBe(0.5);
+    expect(getMillEfficiencyMultiplier({ buildingId: 'windmill' }, { elevation: 0.78 })).toBe(1.5);
+    expect(getMillEfficiencyMultiplier({ buildingId: 'watermill' }, { elevation: 0.38 })).toBe(1.0);
+    expect(getMillSlotCount({ buildingId: 'windmill', level: 3 })).toBe(3);
+
+    const millTerritory = {
+      size: 25,
+      tiles: Array.from({ length: 625 }, () => ({ elevation: 0.78, isWater: false, buildable: true })),
+    };
+    const millSim = advanceMillAutoCrafting({
+      buildings: [
+        { buildingId: 'warehouse', tier: 4, level: 1, status: 'active' },
+        {
+          instanceId: 'wm-1',
+          buildingId: 'windmill',
+          x: 10,
+          y: 10,
+          tier: 4,
+          level: 2,
+          status: 'active',
+          autoRecipes: ['saw_planks', 'braid_rope_straw'],
+        },
+      ],
+      territory: millTerritory,
+      inventory: { wood_logs: 100, straw: 200 },
+      water: 20,
+      unlockedTechs: ['iron_saw'],
+      deltaVirtualMs: REAL_MS_PER_INGAME_DAY,
+    });
+    // At 1.5x speed over 24h = 36h total work, Windmill crafts ONLY 1 item at a time round-robin (45 total crafts of 0.8h):
+    // 23x saw_planks (+92 planks) & 22x braid_rope_straw (+22 rope).
+    expect(millSim.inventory.planks).toBe(92);
+    expect(millSim.inventory.rope).toBe(22);
+
+    // Upfront deduction check: half-finished 0.4h watermill craft deducts 2 wood_logs immediately and completes on next 0.4h.
+    const halfMill = advanceMillAutoCrafting({
+      buildings: [
+        { buildingId: 'warehouse', tier: 4, level: 1, status: 'active' },
+        {
+          instanceId: 'wm-upfront',
+          buildingId: 'watermill',
+          x: 10,
+          y: 10,
+          tier: 4,
+          level: 1,
+          status: 'active',
+          autoRecipes: ['saw_planks'],
+        },
+      ],
+      territory: millTerritory,
+      inventory: { wood_logs: 4 },
+      water: 0,
+      unlockedTechs: ['iron_saw'],
+      deltaVirtualMs: REAL_MS_PER_INGAME_DAY / 60, // 0.4h
+    });
+    expect(halfMill.inventory.wood_logs).toBe(2);
+    expect(halfMill.inventory.planks ?? 0).toBe(0);
+    expect(halfMill.craftedBatches).toHaveLength(0);
+
+    const finishMill = advanceMillAutoCrafting({
+      buildings: [
+        { buildingId: 'warehouse', tier: 4, level: 1, status: 'active' },
+        {
+          instanceId: 'wm-upfront',
+          buildingId: 'watermill',
+          x: 10,
+          y: 10,
+          tier: 4,
+          level: 1,
+          status: 'active',
+          autoRecipes: ['saw_planks'],
+        },
+      ],
+      territory: millTerritory,
+      inventory: halfMill.inventory,
+      water: 0,
+      unlockedTechs: ['iron_saw'],
+      craftedCounts: halfMill.craftedCounts,
+      autoCraftCarry: halfMill.autoCraftCarry,
+      deltaVirtualMs: REAL_MS_PER_INGAME_DAY / 60, // remaining 0.4h finishes first craft without extra logs when 0 left? Wait: logs still = 2, finishes 1st (+4 planks) and immediately deducts 2nd!
+    });
+    expect(finishMill.inventory.planks).toBe(4);
+    expect(finishMill.craftedBatches).toEqual([{ recipeId: 'saw_planks', count: 1 }]);
+
+    // 6. Repeatable Ruin expeditions drop up to 1 of each unique Blueprint.
+    const ruinTile = { x: 15, y: 15, biome: 'grassland', rockType: 'shale', isRuin: true };
+    const firstRuin = resolveContinentExpedition({
+      continentFog: new Uint8Array(100 * 100),
+      continentSize: 100,
+      targetTile: ruinTile,
+      targetRockOres: ['iron', 'coal'],
+      units: { scout: 1, caravan: 1 },
+      unlockedBlueprints: [],
+      rng: createPrng(99),
+    });
+    expect(BLUEPRINT_IDS).toContain(firstRuin.blueprintDropped);
+    expect(Object.keys(firstRuin.itemsBroughtBack).length).toBeGreaterThan(0);
+
+    const allDoneRuin = resolveContinentExpedition({
+      continentFog: new Uint8Array(100 * 100),
+      continentSize: 100,
+      targetTile: ruinTile,
+      targetRockOres: ['iron', 'coal'],
+      units: { scout: 1, caravan: 1 },
+      unlockedBlueprints: [...BLUEPRINT_IDS],
+      rng: createPrng(99),
+    });
+    expect(allDoneRuin.blueprintDropped).toBeNull();
+    expect(Object.keys(allDoneRuin.itemsBroughtBack).length).toBeGreaterThan(0);
+
+    // 7. Colonization plan (1 Builder + transport carry + 2x food/water + starter bundle) & Colony starter inventory.
+    expect(COLONY_STARTER_INVENTORY.copper_ingot).toBe(4);
+    const colBlocked = calculateColonizationPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 12, y: 10 },
+      targetTile: { x: 12, y: 10, buildable: true, isObelisk: false },
+      units: { builder: 1 },
+      inventory: COLONY_STARTER_COST,
+      storedFood: 500,
+      water: 500,
+    });
+    expect(colBlocked.allowed).toBe(false);
+
+    const colReady = calculateColonizationPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 12, y: 10 },
+      targetTile: { x: 12, y: 10, buildable: true, isObelisk: false },
+      units: { builder: 1, wagon: 1 },
+      inventory: COLONY_STARTER_COST,
+      storedFood: 500,
+      water: 500,
+    });
+    expect(colReady.allowed).toBe(true);
+    expect(colReady.plan.foodNeeded).toBeGreaterThanOrEqual(6);
+
+    // 8. Abandoned Village conquest requires 1 Knight + sufficient attack vs Bandit defense (`tier * 40`).
+    const conqNoKnight = calculateConquerAbandonedPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 12, y: 10 },
+      units: { swordsman: 5 },
+      abandonedMainTier: 3,
+      storedFood: 500,
+      water: 500,
+    });
+    expect(conqNoKnight.allowed).toBe(false);
+
+    const conqWeak = calculateConquerAbandonedPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 12, y: 10 },
+      units: { knight: 1 }, // 45 atk < 120 bandit power for Tier 3
+      abandonedMainTier: 3,
+      storedFood: 500,
+      water: 500,
+    });
+    expect(conqWeak.allowed).toBe(false);
+    expect(conqWeak.banditPower).toBe(120);
+
+    const conqReady = calculateConquerAbandonedPlan({
+      from: { x: 10, y: 10 },
+      to: { x: 12, y: 10 },
+      units: { knight: 1, swordsman: 3 },
+      unitTiers: { swordsman: 4 }, // 45 + 3*34 = 147 >= 120
+      abandonedMainTier: 3,
+      storedFood: 500,
+      water: 500,
+    });
+    expect(conqReady.allowed).toBe(true);
+    expect(BLUEPRINTS.blueprint_windmill.unlocksBuilding).toBe('windmill');
   });
 });

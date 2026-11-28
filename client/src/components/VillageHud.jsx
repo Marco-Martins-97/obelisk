@@ -1,12 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   AGES,
+  BLUEPRINTS,
   BUILDINGS,
   RECIPES,
   RESOURCES,
   TECHNOLOGIES,
   UNITS,
   canCancelTask,
+  getBuildingTierConfig,
+  getTaskCancelInfo,
   getTaskPhase,
   getVillageDailyProductionSummary,
 } from '@obelisk/shared';
@@ -19,6 +22,7 @@ import {
 } from '../utils/timeFormat.js';
 
 const PHASE_BADGE_STYLES = {
+  queued: 'bg-slate-800 text-slate-300',
   going: 'bg-sky-500/20 text-sky-300',
   doing: 'bg-amber-500/20 text-amber-300',
   returning: 'bg-emerald-500/20 text-emerald-300',
@@ -220,13 +224,13 @@ export function VillageHeaderBar({
           </span>
           <span className="text-slate-200">
             Food:{' '}
-            <strong className={getReserveLowColorClass(storedFood, storageCapacity, 'text-emerald-300')}>
+            <strong className={getReserveLowColorClass(storedFood, popUsed, 'text-emerald-300')}>
               {formattedFood}
             </strong>
           </span>
           <span className="text-slate-200">
             Water:{' '}
-            <strong className={getReserveLowColorClass(state.water, waterCapacity, 'text-sky-300')}>
+            <strong className={getReserveLowColorClass(state.water, popUsed, 'text-sky-300')}>
               {state.water}/{waterCapacity}
             </strong>
           </span>
@@ -415,6 +419,7 @@ export function VillageSidebarPanels({ village, territory = null }) {
                         ? BUILDINGS[trainerBuilding.buildingId]?.name ?? 'Main Hall'
                         : 'Main Hall';
 
+                const unitBatch = t.kind === 'train_unit' && (t.quantity ?? 1) > 1 ? `${t.quantity}x ` : '';
                 const craftBatch = t.quantity > 1 ? `${t.quantity}x ` : '';
                 const rightLabel =
                   t.kind === 'unit_action'
@@ -424,26 +429,30 @@ export function VillageSidebarPanels({ village, territory = null }) {
                       : t.kind === 'prospect'
                         ? 'Prospect Survey'
                         : t.kind === 'build'
-                          ? `Build ${BUILDINGS[t.buildingId].name}`
+                          ? `Build ${getBuildingTierConfig(t.buildingId, t.targetTier ?? 1).name}`
                           : t.kind === 'upgrade_main'
                             ? `Main -> Tier ${t.targetTier}`
                             : t.kind === 'upgrade_tier'
-                              ? `${BUILDINGS[t.buildingId].name} -> T${t.targetTier}`
+                              ? `${getBuildingTierConfig(t.buildingId, t.targetTier ?? 1).name} -> T${t.targetTier}`
                               : t.kind === 'upgrade_wall'
                                 ? `Wall -> T${t.targetTier} L${t.targetLevel}`
                                 : t.kind === 'upgrade'
                                   ? `Upgrade ${BUILDINGS[t.buildingId].name}`
                                   : t.kind === 'train_unit'
-                                    ? `Recruit ${UNITS[t.unitId]?.name ?? t.unitId}`
+                                    ? `${unitBatch}Recruit ${UNITS[t.unitId]?.name ?? t.unitId}`
                                     : t.kind === 'research'
                                       ? `Research ${TECHNOLOGIES[t.techId].name}`
                                       : `Craft ${craftBatch}${RECIPES[t.recipeId].name}`;
 
-                const canCancel = Boolean(
-                  !state.isAbandoned &&
-                    village.cancelTask &&
-                    canCancelTask(t, state.virtualTimeMs).allowed,
-                );
+                const cancelInfo =
+                  !state.isAbandoned && village.cancelTask
+                    ? getTaskCancelInfo(t, state.virtualTimeMs)
+                    : { allowed: false, cancelMode: null };
+                const canCancel = Boolean(cancelInfo.allowed && canCancelTask(t, state.virtualTimeMs).allowed);
+                const cancelText =
+                  cancelInfo.cancelMode === 'waiting_only'
+                    ? `Cancel (${(t.quantity ?? 1) - 1})`
+                    : 'Cancel';
 
                 return (
                   <li
@@ -477,7 +486,7 @@ export function VillageSidebarPanels({ village, territory = null }) {
                             onClick={() => village.cancelTask(t.id)}
                             className="rounded border border-rose-700/70 bg-rose-950/70 px-1.5 py-0.5 font-semibold text-rose-200 hover:bg-rose-900/80"
                           >
-                            Cancel
+                            {cancelText}
                           </button>
                         )}
                         <span
@@ -728,7 +737,7 @@ export function StockpileModal({ isOpen, village, onClose }) {
  * @param {() => void} props.onClose
  * @returns {import('react').JSX.Element}
  */
-export function TechnologiesModal({ isOpen, unlockedTechs, onClose }) {
+export function TechnologiesModal({ isOpen, unlockedTechs, unlockedBlueprints = [], onClose }) {
   const dialogRef = useRef(null);
   const titleId = useId();
   useNativeDialogSync(dialogRef, isOpen, onClose);
@@ -757,6 +766,27 @@ export function TechnologiesModal({ isOpen, unlockedTechs, onClose }) {
           </div>
 
           <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1 text-xs">
+            {unlockedBlueprints.length > 0 && (
+              <div className="space-y-1.5 border-b border-slate-800 pb-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300">
+                  Discovered Ruin Blueprints ({unlockedBlueprints.length}/3)
+                </div>
+                {unlockedBlueprints.map((bpId) => {
+                  const bp = BLUEPRINTS[bpId];
+                  return (
+                    <div
+                      key={bpId}
+                      className="rounded-lg border border-purple-500/40 bg-purple-950/30 p-2.5"
+                    >
+                      <div className="font-semibold text-purple-200">{bp?.name ?? bpId}</div>
+                      {bp?.description && (
+                        <p className="mt-0.5 text-[11px] text-slate-300">{bp.description}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {unlockedTechs.length === 0 ? (
               <p className="text-slate-500">No technologies unlocked yet.</p>
             ) : (

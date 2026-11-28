@@ -97,7 +97,7 @@ export function drawSurfaceTile(ctx, key, dx, dy, size) {
  * Draws a crisp Gameplay-view resource node or Obelisk icon inside a tile.
  *
  * @param {CanvasRenderingContext2D} ctx - Target 2D context.
- * @param {'obelisk' | 'ore_vein' | 'surface_rock' | 'timber' | 'wild_crop'} kind - Marker kind.
+ * @param {'obelisk' | 'ruin' | 'ore_vein' | 'surface_rock' | 'timber' | 'wild_crop'} kind - Marker kind.
  * @param {number} dx - Tile top-left X in pixels.
  * @param {number} dy - Tile top-left Y in pixels.
  * @param {number} size - Tile size in pixels.
@@ -111,6 +111,15 @@ export function drawGameplayMarker(ctx, kind, dx, dy, size) {
     ctx.fillRect(dx + pad, dy + pad, inner, inner);
     ctx.fillStyle = '#fbbf24';
     ctx.fillRect(dx + size * 0.38, dy + size * 0.18, size * 0.24, size * 0.64);
+    return;
+  }
+
+  if (kind === 'ruin') {
+    ctx.fillStyle = '#312e81';
+    ctx.fillRect(dx + pad, dy + pad, inner, inner);
+    ctx.fillStyle = '#c084fc';
+    ctx.fillRect(dx + size * 0.26, dy + size * 0.26, size * 0.18, size * 0.48);
+    ctx.fillRect(dx + size * 0.56, dy + size * 0.34, size * 0.18, size * 0.4);
     return;
   }
 

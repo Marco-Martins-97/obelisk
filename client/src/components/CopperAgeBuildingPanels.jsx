@@ -5,11 +5,14 @@ import {
   FERTILIZER_TO_NUTRIENT,
   LIVESTOCK,
   ORCHARD_TREES,
+  RECIPES,
   RESOURCES,
   UNITS,
   calculateTierLevelValue,
   getBuildingDailyProduction,
   getBuildingUpgradePreview,
+  getMillEfficiencyMultiplier,
+  getMillSlotCount,
 } from '@obelisk/shared';
 import CostInline from './CostInline.jsx';
 import { formatRealDurationHMS, formatRealHoursHMS } from '../utils/timeFormat.js';
@@ -679,10 +682,79 @@ export default function CopperAgeBuildingPanels({
     );
   };
 
+  // 8. Windmill & Watermill Automated Recipe Slots (1 slot per level)
+  const renderMillAutomationSection = () => {
+    if (building.buildingId !== 'windmill' && building.buildingId !== 'watermill') return null;
+    const slotCount = getMillSlotCount(building);
+    const millEff = getMillEfficiencyMultiplier(building, tile);
+    const effPct = Math.round(millEff * 100);
+    const unlockedSet = new Set(state.unlockedTechs ?? []);
+    const availableRecipes = Object.values(RECIPES).filter(
+      (r) => !r.requiredTech || unlockedSet.has(r.requiredTech),
+    );
+    const assigned = Array.isArray(building.autoRecipes) ? building.autoRecipes : [];
+
+    return (
+      <section className="space-y-2 rounded-lg border border-cyan-800/60 bg-slate-950/70 p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-cyan-300">
+            Automated Mill Slots ({slotCount}/{def.maxLevel})
+          </h3>
+          <span className="font-mono text-[11px] text-emerald-300">
+            Speed: {effPct}% {building.buildingId === 'windmill' ? '(Elevation Bonus)' : '(Stable River Flow)'}
+          </span>
+        </div>
+        <div className="space-y-1.5 text-[11px]">
+          {Array.from({ length: slotCount }, (_, slotIdx) => {
+            const currentId = assigned[slotIdx] ?? '';
+            const activeRecipe = currentId ? RECIPES[currentId] : null;
+            const batchesPerDay = activeRecipe
+              ? Math.round(((24 * millEff) / activeRecipe.craftTimeHours) * 10) / 10
+              : 0;
+            return (
+              <div
+                key={slotIdx}
+                className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5"
+              >
+                <span className="font-mono text-slate-300">Slot {slotIdx + 1}:</span>
+                <select
+                  aria-label={`Auto recipe slot ${slotIdx + 1}`}
+                  disabled={isAbandoned}
+                  value={currentId}
+                  onChange={(e) =>
+                    village.setMillAutoRecipe?.({
+                      buildingInstanceId: building.instanceId,
+                      slotIndex: slotIdx,
+                      recipeId: e.target.value || null,
+                    })
+                  }
+                  className="min-w-[180px] flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+                >
+                  <option value="">— Idle (Select Recipe) —</option>
+                  {availableRecipes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+                {activeRecipe && (
+                  <span className="font-mono text-[10px] text-amber-300">
+                    ~{batchesPerDay}/day
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  };
+
   return (
     <>
       {renderWallSection()}
       {renderProductionSection()}
+      {renderMillAutomationSection()}
       {renderFarmSection()}
       {renderCropFieldSection()}
       {renderOrchardSection()}

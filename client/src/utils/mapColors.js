@@ -142,10 +142,9 @@ export const BUILDING_COLORS = Object.freeze({
   market: { fill: '#8b5cf6', badge: 'MK' },
   expedition_outpost: { fill: '#06b6d4', badge: 'EX' },
   workshop: { fill: '#c2410c', badge: 'WS' },
-  smokehouse: { fill: '#dc2626', badge: 'SH' },
-  forge: { fill: '#e11d48', badge: 'FG' },
-  bloomery: { fill: '#475569', badge: 'BF' },
   watchtower: { fill: '#facc15', badge: 'WT' },
   port: { fill: '#0ea5e9', badge: 'PT' },
   barracks: { fill: '#be123c', badge: 'BK' },
+  windmill: { fill: '#38bdf8', badge: 'WM' },
+  watermill: { fill: '#0284c7', badge: 'WTM' },
 });

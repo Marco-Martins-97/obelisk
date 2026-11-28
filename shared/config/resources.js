@@ -345,6 +345,15 @@ export const RESOURCES = Object.freeze({
     sizeClass: 2,
     description: 'Smelted wrought iron bar from a Bloomery; unlocks the Iron Age.',
   }),
+  steel_ingot: createResource({
+    id: 'steel_ingot',
+    name: 'Steel Ingot',
+    category: 'ingot',
+    age: 'steel',
+    tier: 5,
+    sizeClass: 2,
+    description: 'Carburized steel bar smelted inside a Blast Furnace; unlocks the Steel Age.',
+  }),
   flax: createResource({
     id: 'flax',
     name: 'Flax Fibers',
@@ -672,4 +681,59 @@ export const STARTER_VILLAGE_POOLS = Object.freeze({
   basePopCapacity: 10,
   water: 5,
   waterCapacity: 10,
+});
+
+/**
+ * Ancient Blueprints discoverable exclusively by exploring Continent Ruins (max 1 of each globally).
+ * Unlock Iron-tier advanced technologies and automated Mill buildings.
+ */
+export const BLUEPRINTS = Object.freeze({
+  blueprint_crossbow: Object.freeze({
+    id: 'blueprint_crossbow',
+    name: 'Crossbow Blueprint',
+    unlocksTech: 'crossbow',
+    description: 'Ancient torsion-bow schematic enabling Iron Age Crossbow research.',
+  }),
+  blueprint_windmill: Object.freeze({
+    id: 'blueprint_windmill',
+    name: 'Windmill Blueprint',
+    unlocksBuilding: 'windmill',
+    description: 'Geared wind-vane mechanism unlocking automated Windmill construction.',
+  }),
+  blueprint_watermill: Object.freeze({
+    id: 'blueprint_watermill',
+    name: 'Watermill Blueprint',
+    unlocksBuilding: 'watermill',
+    description: 'Paddle-wheel gearwork schematic unlocking automated Watermill construction.',
+  }),
+});
+
+/** Ordered array of all Ruin Blueprint identifiers. */
+export const BLUEPRINT_IDS = Object.freeze(Object.keys(BLUEPRINTS));
+
+/** Material supplies consumed from the home village when founding a new Colony. */
+export const COLONY_STARTER_COST = Object.freeze({
+  wood_logs: 15,
+  stone_blocks: 15,
+  planks: 10,
+});
+
+/** Starter Copper Age buffer inventory placed inside newly colonized settlements. */
+export const COLONY_STARTER_INVENTORY = Object.freeze({
+  sticks: 20,
+  wood_logs: 15,
+  small_stones: 15,
+  stone_blocks: 10,
+  clay: 10,
+  pelts: 10,
+  straw: 10,
+  copper_ingot: 4,
+  bread: 10,
+});
+
+/** Starter Copper Age Main Hall pool values for newly colonized settlements. */
+export const COLONY_STARTER_POOLS = Object.freeze({
+  mainTier: 2,
+  mainLevel: 1,
+  water: 25,
 });

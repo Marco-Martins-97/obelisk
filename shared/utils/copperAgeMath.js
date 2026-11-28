@@ -9,14 +9,14 @@
  * Isomorphic & environment-agnostic: never uses Math.random() or Node/DOM APIs.
  */
 
-import { BUILDINGS } from '../config/buildings.js';
+import { BUILDINGS, getBuildingTierConfig } from '../config/buildings.js';
 import {
   CROPS,
   LIVESTOCK,
   ORCHARD_TREES,
   classifyOreDensitySample,
 } from '../config/farming.js';
-import { RESOURCES } from '../config/resources.js';
+import { BLUEPRINT_IDS, COLONY_STARTER_COST, RESOURCES } from '../config/resources.js';
 import { RECIPES } from '../config/recipes.js';
 import { TECHNOLOGIES } from '../config/technologies.js';
 import { UNITS } from '../config/units.js';
@@ -26,7 +26,7 @@ import {
   REAL_MS_PER_INGAME_DAY,
   REAL_MS_PER_INGAME_HOUR,
 } from '../config/worldConstants.js';
-import { ORES } from '../config/worldGeology.js';
+import { ELEVATION_BANDS, ORES } from '../config/worldGeology.js';
 import { TERRITORY_FOREST_THRESHOLD } from '../generators/territoryGenerator.js';
 import {
   calculateMaxPopulation,
@@ -48,7 +48,7 @@ export function resolveMinedOreResourceId(oreId) {
 
 /**
  * Computes material cost and validation for advancing an active building from
- * `level === maxLevel` in `tier` to `level = 1` in `tier + 1`.
+ * `tier` (at any level) to `level = 1` in `tier + 1`.
  *
  * @param {object} params
  * @param {{ buildingId: string, tier?: number, level?: number, status?: string }} params.building
@@ -56,6 +56,7 @@ export function resolveMinedOreResourceId(oreId) {
  * @returns {{
  *   allowed: boolean,
  *   targetTier: number,
+ *   targetName: string,
  *   cost: Record<string, number>,
  *   buildTimeHours: number,
  *   buildersRequired: number,
@@ -65,34 +66,73 @@ export function resolveMinedOreResourceId(oreId) {
 export function getBuildingTierUpgradeRule({ building, mainTier = 1 }) {
   const def = building ? BUILDINGS[building.buildingId] : null;
   if (!building || !def) {
-    return { allowed: false, targetTier: 1, cost: {}, buildTimeHours: 0, buildersRequired: 0, reason: 'Invalid building.' };
+    return {
+      allowed: false,
+      targetTier: 1,
+      targetName: 'Unknown',
+      cost: {},
+      buildTimeHours: 0,
+      buildersRequired: 0,
+      reason: 'Invalid building.',
+    };
   }
 
   const currentTier = building.tier ?? def.tier;
   const targetTier = currentTier + 1;
-  if (building.status && building.status !== 'active') {
-    return { allowed: false, targetTier, cost: {}, buildTimeHours: 0, buildersRequired: 0, reason: 'Finish current work first.' };
-  }
-  if ((building.level ?? 1) < def.maxLevel) {
-    return { allowed: false, targetTier, cost: {}, buildTimeHours: 0, buildersRequired: 0, reason: `Reach Level ${def.maxLevel} first.` };
-  }
+  const curTierCfg = getBuildingTierConfig(building.buildingId, currentTier);
+  const nextTierCfg = getBuildingTierConfig(building.buildingId, targetTier);
+
   if (currentTier >= def.maxTier) {
-    return { allowed: false, targetTier, cost: {}, buildTimeHours: 0, buildersRequired: 0, reason: 'Building is already at max Tier.' };
-  }
-  if (mainTier < targetTier) {
-    return { allowed: false, targetTier, cost: {}, buildTimeHours: 0, buildersRequired: 0, reason: `Requires Main Tier ${targetTier}.` };
+    return {
+      allowed: false,
+      targetTier,
+      targetName: curTierCfg.name,
+      cost: {},
+      buildTimeHours: 0,
+      buildersRequired: 0,
+      reason: 'Building is already at max Tier.',
+    };
   }
 
-  const cost = Object.fromEntries(
-    Object.entries(def.cost ?? {}).map(([id, q]) => [id, Math.max(1, Math.round(q * targetTier))]),
-  );
+  const explicitTierCost = def.tiers?.[targetTier]?.cost;
+  const cost = explicitTierCost
+    ? { ...explicitTierCost }
+    : Object.fromEntries(
+        Object.entries(def.cost ?? {}).map(([id, q]) => [id, Math.max(1, Math.round(q * targetTier))]),
+      );
+  const buildTimeHours = (nextTierCfg.buildTimeHours ?? def.buildTimeHours) * targetTier;
+  const buildersRequired = Math.max(1, def.buildersRequired);
+
+  if (building.status && building.status !== 'active') {
+    return {
+      allowed: false,
+      targetTier,
+      targetName: nextTierCfg.name,
+      cost,
+      buildTimeHours,
+      buildersRequired,
+      reason: 'Finish current work first.',
+    };
+  }
+  if (mainTier < targetTier) {
+    return {
+      allowed: false,
+      targetTier,
+      targetName: nextTierCfg.name,
+      cost,
+      buildTimeHours,
+      buildersRequired,
+      reason: `Requires Main Tier ${targetTier}.`,
+    };
+  }
 
   return {
     allowed: true,
     targetTier,
+    targetName: nextTierCfg.name,
     cost,
-    buildTimeHours: def.buildTimeHours * targetTier,
-    buildersRequired: Math.max(1, def.buildersRequired),
+    buildTimeHours,
+    buildersRequired,
     reason: null,
   };
 }
@@ -533,8 +573,9 @@ export function getBuildingDailyProduction({
   if (conditionMult <= 0) return [];
 
   const tier = building.tier ?? def.tier;
-  const level = Math.max(1, Math.min(building.level ?? 1, def.maxLevel));
-  const basePerDay = calculateTierLevelValue(def.productionTierBases, tier, level, def.maxLevel);
+  const maxLv = getBuildingTierConfig(def.id, tier).maxLevel;
+  const level = Math.max(1, Math.min(building.level ?? 1, maxLv));
+  const basePerDay = calculateTierLevelValue(def.productionTierBases, tier, level, maxLv);
   const toolMult = getProductionToolMultiplier(def.id, unlockedTechs);
   const effMult = Math.max(0.2, 1 - efficiencyPenalty);
   const effectiveDaily = basePerDay * toolMult * effMult * conditionMult;
@@ -1018,13 +1059,15 @@ export function resolveOrchardHarvest({ plot, season, year, unlockedTechs = [] }
  */
 export function rollWildAnimalCapture({ unlockedTechs = [], rng }) {
   const unlocked = new Set(unlockedTechs);
-  const captureChance = unlocked.has('bronze_spear')
-    ? 0.45
-    : unlocked.has('copper_spear')
-      ? 0.35
-      : unlocked.has('stone_spear')
-        ? 0.25
-        : 0;
+  const captureChance = unlocked.has('iron_spear')
+    ? 0.55
+    : unlocked.has('bronze_spear')
+      ? 0.45
+      : unlocked.has('copper_spear')
+        ? 0.35
+        : unlocked.has('stone_spear')
+          ? 0.25
+          : 0;
   if (captureChance <= 0 || typeof rng !== 'function' || rng() >= captureChance) {
     return { captured: false, animalId: null };
   }
@@ -1191,27 +1234,33 @@ export function resolveContinentExpedition({
   targetTile,
   targetRockOres = [],
   units = {},
+  unlockedBlueprints = [],
   rng,
 }) {
   const scouts = Math.max(0, Math.floor(units.scout ?? 0));
   const cavalry = Math.max(0, Math.floor(units.cavalry ?? 0));
-  const caravans = Math.max(0, Math.floor(units.caravan ?? 0));
+  const knights = Math.max(0, Math.floor(units.knight ?? 0));
+  const caravans =
+    Math.max(0, Math.floor(units.caravan ?? 0)) +
+    Math.max(0, Math.floor(units.wagon ?? 0));
   const boats =
     Math.max(0, Math.floor(units.fishing_boat ?? 0)) +
-    Math.max(0, Math.floor(units.transport_ship ?? 0));
+    Math.max(0, Math.floor(units.transport_ship ?? 0)) +
+    Math.max(0, Math.floor(units.merchant_ship ?? 0));
   const gatherers = Math.max(0, Math.floor(units.gatherer ?? 0));
   const hunters = Math.max(0, Math.floor(units.hunter ?? 0));
   const soldiers =
     Math.max(0, Math.floor(units.spearman ?? 0)) +
     Math.max(0, Math.floor(units.swordsman ?? 0)) +
     Math.max(0, Math.floor(units.archer ?? 0)) +
-    cavalry;
+    cavalry +
+    knights;
   const prospectors = Math.max(0, Math.floor(units.prospector ?? 0));
 
   let nextFog = new Uint8Array(continentFog);
   let newlyRevealedCount = 0;
 
-  if (scouts > 0 || cavalry > 0) {
+  if (scouts > 0 || cavalry > 0 || knights > 0) {
     const rev = revealBox3x3(continentFog, continentSize, targetTile.x, targetTile.y, {
       requireCenterExplored: false,
       radius: 1,
@@ -1252,6 +1301,23 @@ export function resolveContinentExpedition({
     addLoot('fish', boats * (4 + Math.floor(rng() * 4)));
   }
 
+  // Repeatable Ruin exploration yields rich relics/ores plus up to 1 of each unique Blueprint.
+  let blueprintDropped = null;
+  if (targetTile?.isRuin) {
+    const ruinLootPool = ['iron_ore', 'coal', 'silver_ore', 'gold_ore', 'gems', 'iron_ingot'];
+    const explorers = Math.max(1, scouts + prospectors + soldiers + gatherers);
+    for (let i = 0; i < Math.min(4, explorers); i += 1) {
+      const pick = ruinLootPool[Math.floor(rng() * ruinLootPool.length)];
+      addLoot(pick, pick === 'iron_ingot' || pick === 'gems' ? 1 : 2 + Math.floor(rng() * 3));
+    }
+
+    const blueprintSet = new Set(unlockedBlueprints ?? []);
+    const remainingBlueprints = BLUEPRINT_IDS.filter((bpId) => !blueprintSet.has(bpId));
+    if (remainingBlueprints.length > 0 && scouts + prospectors + soldiers > 0) {
+      blueprintDropped = remainingBlueprints[Math.floor(rng() * remainingBlueprints.length)];
+    }
+  }
+
   const maxCarryBulk = Object.entries(units ?? {}).reduce(
     (sum, [id, q]) => sum + Math.max(0, Math.floor(Number(q) || 0)) * (UNITS[id]?.carryCapacity ?? 0),
     0,
@@ -1278,9 +1344,11 @@ export function resolveContinentExpedition({
       biome: targetTile.biome,
       rockType: targetTile.rockType,
       availableOres: [...targetRockOres],
+      isRuin: Boolean(targetTile.isRuin),
     },
     itemsBroughtBack,
     capturedAnimal,
+    blueprintDropped,
     intelOnly: maxCarryBulk === 0,
   };
 }
@@ -1318,23 +1386,24 @@ function computeBuildingStatsSnapshot(def, tier, level) {
     };
   }
 
-  const clampedLevel = Math.max(1, Math.min(level, def.maxLevel));
+  const maxLv = getBuildingTierConfig(def.id, tier).maxLevel;
+  const clampedLevel = Math.max(1, Math.min(level, maxLv));
 
   const popCap = def.popTierBases
-    ? calculateTierLevelValue(def.popTierBases, tier, clampedLevel, def.maxLevel)
+    ? calculateTierLevelValue(def.popTierBases, tier, clampedLevel, maxLv)
     : def.popBonusPerLevel > 0
       ? def.popBonusPerLevel * clampedLevel
       : 0;
 
   const storage =
     def.id !== 'farm' && def.storageTierBases
-      ? calculateTierLevelValue(def.storageTierBases, tier, clampedLevel, def.maxLevel)
+      ? calculateTierLevelValue(def.storageTierBases, tier, clampedLevel, maxLv)
       : def.id !== 'farm' && def.storageBonusPerLevel > 0
         ? def.storageBonusPerLevel * clampedLevel
         : 0;
 
   const preservedStorage = def.preservedStorageTierBases
-    ? calculateTierLevelValue(def.preservedStorageTierBases, tier, clampedLevel, def.maxLevel)
+    ? calculateTierLevelValue(def.preservedStorageTierBases, tier, clampedLevel, maxLv)
     : def.preservedStorageBonusPerLevel > 0
       ? def.preservedStorageBonusPerLevel * clampedLevel
       : 0;
@@ -1343,30 +1412,30 @@ function computeBuildingStatsSnapshot(def, tier, level) {
   if (tier === 1 && Array.isArray(def.waterCapacityByLevel) && def.waterCapacityByLevel.length > 0) {
     waterCap = def.waterCapacityByLevel[Math.min(clampedLevel - 1, def.waterCapacityByLevel.length - 1)];
   } else if (def.waterTierBases) {
-    waterCap = calculateTierLevelValue(def.waterTierBases, tier, clampedLevel, def.maxLevel);
+    waterCap = calculateTierLevelValue(def.waterTierBases, tier, clampedLevel, maxLv);
   } else if (def.waterCapacity > 0) {
     waterCap = def.waterCapacity * clampedLevel;
   }
 
   const productionPerDay = def.productionTierBases
-    ? calculateTierLevelValue(def.productionTierBases, tier, clampedLevel, def.maxLevel)
+    ? calculateTierLevelValue(def.productionTierBases, tier, clampedLevel, maxLv)
     : 0;
 
   const seedVault =
     def.id === 'farm' && def.storageTierBases
-      ? calculateTierLevelValue(def.storageTierBases, tier, clampedLevel, def.maxLevel)
+      ? calculateTierLevelValue(def.storageTierBases, tier, clampedLevel, maxLv)
       : 0;
 
   const maxAttachments = def.attachmentTierBases
-    ? calculateTierLevelValue(def.attachmentTierBases, tier, clampedLevel, def.maxLevel)
+    ? calculateTierLevelValue(def.attachmentTierBases, tier, clampedLevel, maxLv)
     : 0;
 
   const penCapacity = def.penCapacityTierBases
-    ? calculateTierLevelValue(def.penCapacityTierBases, tier, clampedLevel, def.maxLevel)
+    ? calculateTierLevelValue(def.penCapacityTierBases, tier, clampedLevel, maxLv)
     : 0;
 
   const wallDefensePercent = def.defenseTierBases
-    ? calculateTierLevelValue(def.defenseTierBases, tier, clampedLevel, def.maxLevel)
+    ? calculateTierLevelValue(def.defenseTierBases, tier, clampedLevel, maxLv)
     : 0;
 
   return {
@@ -1416,7 +1485,7 @@ function diffBuildingStatSnapshots(currentStats, targetStats) {
       ? metrics
           .map((m) => `${m.delta > 0 ? `+${m.delta}` : m.delta}${m.unit} ${m.label}`)
           .join(' · ')
-      : 'Advances upgrade readiness toward the next Tier';
+      : 'Updates building structure for this Tier';
   return { metrics, summary };
 }
 
@@ -1439,10 +1508,11 @@ export function getBuildingUpgradePreview({ building }) {
 
   const currentTier = building.tier ?? def.tier;
   const currentLevel = building.level ?? 0;
+  const curMaxLv = getBuildingTierConfig(def.id, currentTier).maxLevel;
   const current = computeBuildingStatsSnapshot(def, currentTier, currentLevel);
 
   let nextLevel = null;
-  if (currentLevel < def.maxLevel) {
+  if (currentLevel < curMaxLv) {
     const targetLevel = currentLevel + 1;
     const nextStats = computeBuildingStatsSnapshot(def, currentTier, targetLevel);
     nextLevel = {
@@ -1733,6 +1803,39 @@ export function slaughterLivestock({ animals = {}, animalId, count = 1, unlocked
  *   reason: string | null,
  * }} Refit eligibility & cost payload.
  */
+/**
+ * Resolves effective combat attack/defense values for a unit at a given equipment tier (`2..5`).
+ *
+ * @param {string} unitId
+ * @param {number} [unitTier]
+ * @returns {{ attack: number, defense: number }}
+ */
+export function getUnitCombatStats(unitId, unitTier) {
+  const def = UNITS[unitId];
+  if (!def) return { attack: 0, defense: 0 };
+  const tier = Number(unitTier ?? def.tier) || def.tier;
+  if (tier >= 5) return { attack: def.tier5Attack ?? def.tier4Attack ?? def.attack, defense: def.tier5Defense ?? def.tier4Defense ?? def.defense };
+  if (tier >= 4) return { attack: def.tier4Attack ?? def.tier3Attack ?? def.attack, defense: def.tier4Defense ?? def.tier3Defense ?? def.defense };
+  if (tier >= 3) return { attack: def.tier3Attack ?? def.attack, defense: def.tier3Defense ?? def.defense };
+  return { attack: def.attack ?? 0, defense: def.defense ?? 0 };
+}
+
+/**
+ * Evaluates Barracks batch equipment refit across sequential Tiers:
+ * `Tier 2 (Copper) -> Tier 3 (Bronze) -> Tier 4 (Iron) -> Tier 5 (Crossbow)`.
+ *
+ * @param {object} params
+ * @returns {{
+ *   allowed: boolean,
+ *   targetTier: number,
+ *   targetLabel: string,
+ *   unitCount: number,
+ *   cost: Record<string, number>,
+ *   missingTechs: string[],
+ *   canAfford: boolean,
+ *   reason: string | null,
+ * }} Refit eligibility & cost payload.
+ */
 export function getUnitRefitRule({
   unitId,
   currentCount = 0,
@@ -1745,6 +1848,7 @@ export function getUnitRefitRule({
     return {
       allowed: false,
       targetTier: currentUnitTier,
+      targetLabel: 'Base',
       unitCount: 0,
       cost: {},
       missingTechs: [],
@@ -1752,32 +1856,57 @@ export function getUnitRefitRule({
       reason: 'Unit cannot be refitted.',
     };
   }
-  if (currentUnitTier >= 3) {
+
+  let nextTier = null;
+  let reqTechs = [];
+  let deltaCost = {};
+  let targetLabel = '';
+
+  if (currentUnitTier < 3 && def.upgradeTechs?.length > 0) {
+    nextTier = 3;
+    reqTechs = def.upgradeTechs;
+    deltaCost = def.refitDeltaCost ?? {};
+    targetLabel = 'Bronze';
+  } else if (currentUnitTier === 3 && def.tier4UpgradeTechs?.length > 0) {
+    nextTier = 4;
+    reqTechs = def.tier4UpgradeTechs;
+    deltaCost = def.tier4RefitDeltaCost ?? {};
+    targetLabel = 'Iron';
+  } else if (currentUnitTier === 4 && def.tier5UpgradeTechs?.length > 0) {
+    nextTier = 5;
+    reqTechs = def.tier5UpgradeTechs;
+    deltaCost = def.tier5RefitDeltaCost ?? {};
+    targetLabel = 'Crossbow';
+  }
+
+  if (nextTier === null) {
     return {
       allowed: false,
-      targetTier: 3,
+      targetTier: currentUnitTier,
+      targetLabel: currentUnitTier >= 4 ? 'Max Tier' : 'Bronze',
       unitCount: Math.max(0, Math.floor(currentCount)),
       cost: {},
       missingTechs: [],
       canAfford: true,
-      reason: 'Already Bronze Tier.',
+      reason: 'Already at max equipment Tier.',
     };
   }
 
   const unlockedSet = new Set(unlockedTechs ?? []);
-  const missingTechs = def.upgradeTechs.filter((t) => !unlockedSet.has(t));
+  const missingTechs = reqTechs.filter((t) => !unlockedSet.has(t));
   const cleanCount = Math.max(0, Math.floor(currentCount));
   const cost =
     cleanCount > 0
       ? Object.fromEntries(
-          Object.entries(def.refitDeltaCost ?? {}).map(([id, q]) => [id, q * cleanCount]),
+          Object.entries(deltaCost).map(([id, q]) => [id, q * cleanCount]),
         )
       : {};
   const canAfford = Object.entries(cost).every(([id, q]) => (inventory[id] ?? 0) >= q);
 
   return {
     allowed: missingTechs.length === 0 && cleanCount > 0 && canAfford,
-    targetTier: 3,
+    targetTier: nextTier,
+    targetLabel,
     unitCount: cleanCount,
     cost,
     missingTechs,
@@ -1852,6 +1981,7 @@ export function calculateMarketTradePlan({
  */
 export function groupBuildingRecipesByOutput({
   recipeIds = [],
+  buildingTier = Infinity,
   unlockedTechs = [],
   inventory = {},
   water = 0,
@@ -1866,6 +1996,7 @@ export function groupBuildingRecipesByOutput({
   for (const recipeId of recipeIds ?? []) {
     const recipe = RECIPES[recipeId];
     if (!recipe) continue;
+    if ((recipe.minBuildingTier ?? 1) > buildingTier) continue;
     if (recipe.requiredTech && !unlockedSet.has(recipe.requiredTech)) continue;
 
     const outId = recipe.primaryOutputId ?? Object.keys(recipe.outputs ?? {})[0];
@@ -1890,4 +2021,340 @@ export function groupBuildingRecipesByOutput({
       hasAnyCraftable: craftable.length > 0,
     };
   });
+}
+
+/**
+ * Returns the production speed multiplier for a Windmill (50%..150% scaled linearly across
+ * buildable elevation [SEA_LEVEL, MOUNTAIN_LEVEL]) or Watermill (stable 100%).
+ *
+ * @param {{ buildingId: string }} building
+ * @param {{ elevation?: number } | null} tile
+ * @returns {number} Multiplier in [0.5, 1.5].
+ */
+export function getMillEfficiencyMultiplier(building, tile) {
+  if (!building) return 1.0;
+  if (building.buildingId === 'watermill') return 1.0;
+  if (building.buildingId === 'windmill') {
+    const elev = Number(tile?.elevation ?? ELEVATION_BANDS.SEA_LEVEL);
+    const span = Math.max(0.01, ELEVATION_BANDS.MOUNTAIN_LEVEL - ELEVATION_BANDS.SEA_LEVEL);
+    const t = Math.max(0, Math.min(1, (elev - ELEVATION_BANDS.SEA_LEVEL) / span));
+    return Math.round((0.5 + t * 1.0) * 1000) / 1000;
+  }
+  return 1.0;
+}
+
+/**
+ * Returns the number of automatic recipe slots unlocked by a Windmill or Watermill (1 per level).
+ *
+ * @param {{ buildingId?: string, level?: number }} building
+ * @returns {number} Slot count (1..3).
+ */
+export function getMillSlotCount(building) {
+  const def = building ? BUILDINGS[building.buildingId] : null;
+  if (!def?.autoCraftSlotsPerLevel) return 0;
+  return Math.max(1, Math.min(def.maxLevel, (building.level ?? 1) * def.autoCraftSlotsPerLevel));
+}
+
+/**
+ * Advances lazy automated crafting inside active Windmills and Watermills across `deltaVirtualMs`.
+ * Each Mill crafts only 1 recipe item at a time, rotating through configured `autoRecipes` slots
+ * (`1..maxLevel`) and deducting 1 batch of inputs upfront when each single craft begins.
+ *
+ * @param {object} params
+ * @returns {{
+ *   inventory: Record<string, number>,
+ *   water: number,
+ *   craftedCounts: Record<string, number>,
+ *   autoCraftCarry: Record<string, { activeRecipeId: string | null, slotIndex: number, progress: number }>,
+ *   craftedBatches: Array<{ recipeId: string, count: number }>,
+ * }} Updated state after executing completed Mill crafts.
+ */
+export function advanceMillAutoCrafting({
+  buildings = [],
+  territory = null,
+  inventory = {},
+  water = 0,
+  unlockedTechs = [],
+  craftedCounts = {},
+  autoCraftCarry = {},
+  deltaVirtualMs = 0,
+  efficiencyPenalty = 0,
+}) {
+  if (deltaVirtualMs <= 0) {
+    return { inventory, water, craftedCounts, autoCraftCarry, craftedBatches: [] };
+  }
+
+  const deltaHours = deltaVirtualMs / REAL_MS_PER_INGAME_HOUR;
+  const effMult = Math.max(0.2, 1 - efficiencyPenalty);
+  const unlockedSet = new Set(unlockedTechs ?? []);
+  const size = territory?.size ?? 25;
+
+  const nextInventory = { ...inventory };
+  let nextWater = water;
+  const nextCraftedCounts = { ...craftedCounts };
+  const nextCarry = { ...autoCraftCarry };
+  const batchCounts = new Map();
+
+  const maxStorage = calculateStorageCapacity(buildings, nextInventory).totalCapacity;
+  let usedStorage = calculateStorageUsed(nextInventory);
+
+  const canStartRecipe = (recipe) => {
+    if (!recipe) return false;
+    if (recipe.requiredTech && !unlockedSet.has(recipe.requiredTech)) return false;
+    const wCost = recipe.waterCostBowls ?? 0;
+    if (nextWater < wCost) return false;
+    const hasInputs = Object.entries(recipe.inputs ?? {}).every(
+      ([id, q]) => (nextInventory[id] ?? 0) >= q,
+    );
+    if (!hasInputs) return false;
+
+    let inputBulk = 0;
+    for (const [id, q] of Object.entries(recipe.inputs ?? {})) {
+      inputBulk += q * (RESOURCES[id]?.sizeClass ?? 1);
+    }
+    let outputBulk = 0;
+    for (const [id, q] of Object.entries(recipe.outputs ?? {})) {
+      outputBulk += q * (RESOURCES[id]?.sizeClass ?? 1);
+    }
+    return usedStorage - inputBulk + outputBulk <= maxStorage;
+  };
+
+  for (const bld of buildings ?? []) {
+    if (bld.status && bld.status !== 'active') continue;
+    const slotCount = getMillSlotCount(bld);
+    if (slotCount <= 0) continue;
+    const conditionMult = Math.max(0, Math.min(1, (bld.condition ?? 100) / 100));
+    if (conditionMult <= 0) continue;
+
+    const tile = territory?.tiles?.[bld.y * size + bld.x];
+    const millEff = getMillEfficiencyMultiplier(bld, tile);
+    const assigned = Array.isArray(bld.autoRecipes) ? bld.autoRecipes.slice(0, slotCount) : [];
+
+    const prevEntry = nextCarry[bld.instanceId];
+    const millState =
+      prevEntry && typeof prevEntry === 'object'
+        ? {
+            activeRecipeId: prevEntry.activeRecipeId ?? null,
+            slotIndex: Number.isInteger(prevEntry.slotIndex) ? prevEntry.slotIndex : -1,
+            progress: Number.isFinite(prevEntry.progress) ? prevEntry.progress : 0,
+          }
+        : { activeRecipeId: null, slotIndex: -1, progress: 0 };
+
+    let remainingHours = deltaHours * millEff * conditionMult * effMult;
+    let guard = 0;
+
+    while (remainingHours > 1e-9 && guard < 5000) {
+      guard += 1;
+
+      if (!millState.activeRecipeId) {
+        if (assigned.length === 0) break;
+        let pickedSlot = -1;
+        let pickedRecipe = null;
+        for (let offset = 1; offset <= assigned.length; offset += 1) {
+          const idx = (millState.slotIndex + offset + assigned.length) % assigned.length;
+          const candidate = assigned[idx] ? RECIPES[assigned[idx]] : null;
+          if (canStartRecipe(candidate)) {
+            pickedSlot = idx;
+            pickedRecipe = candidate;
+            break;
+          }
+        }
+        if (!pickedRecipe) break;
+
+        // Deduct 1 batch of inputs upfront when the single active Mill craft begins.
+        const wCost = pickedRecipe.waterCostBowls ?? 0;
+        nextWater -= wCost;
+        for (const [id, q] of Object.entries(pickedRecipe.inputs ?? {})) {
+          nextInventory[id] = (nextInventory[id] ?? 0) - q;
+          if (nextInventory[id] <= 0) delete nextInventory[id];
+          usedStorage -= q * (RESOURCES[id]?.sizeClass ?? 1);
+        }
+        millState.activeRecipeId = pickedRecipe.id;
+        millState.slotIndex = pickedSlot;
+        millState.progress = 0;
+      }
+
+      const activeRecipe = RECIPES[millState.activeRecipeId];
+      if (!activeRecipe || activeRecipe.craftTimeHours <= 0) {
+        millState.activeRecipeId = null;
+        millState.progress = 0;
+        continue;
+      }
+
+      const hoursToFinish = Math.max(0, (1 - millState.progress) * activeRecipe.craftTimeHours);
+      if (remainingHours + 1e-9 >= hoursToFinish) {
+        remainingHours = Math.max(0, remainingHours - hoursToFinish);
+        for (const [id, q] of Object.entries(activeRecipe.outputs ?? {})) {
+          const bulk = q * (RESOURCES[id]?.sizeClass ?? 1);
+          if (usedStorage + bulk <= maxStorage) {
+            nextInventory[id] = (nextInventory[id] ?? 0) + q;
+            usedStorage += bulk;
+          }
+          nextCraftedCounts[id] = (nextCraftedCounts[id] ?? 0) + q;
+        }
+        batchCounts.set(activeRecipe.id, (batchCounts.get(activeRecipe.id) ?? 0) + 1);
+        millState.activeRecipeId = null;
+        millState.progress = 0;
+      } else {
+        millState.progress += remainingHours / activeRecipe.craftTimeHours;
+        remainingHours = 0;
+      }
+    }
+
+    millState.progress = Math.round(Math.max(0, Math.min(0.9999, millState.progress)) * 10000) / 10000;
+    nextCarry[bld.instanceId] = millState;
+  }
+
+  const craftedBatches = Array.from(batchCounts.entries()).map(([recipeId, count]) => ({
+    recipeId,
+    count,
+  }));
+
+  return {
+    inventory: nextInventory,
+    water: nextWater,
+    craftedCounts: nextCraftedCounts,
+    autoCraftCarry: nextCarry,
+    craftedBatches,
+  };
+}
+
+/**
+ * Validates and plans a Colonization Expedition to found a new Copper Age Colony on an empty
+ * buildable Continent tile (`1 Builder` + transport capacity + `2x` food/water + starter bundle).
+ *
+ * @param {object} params
+ * @returns {{
+ *   allowed: boolean,
+ *   reason: string | null,
+ *   plan: object | null,
+ * }} Colonization plan and validation outcome.
+ */
+export function calculateColonizationPlan({
+  from,
+  to,
+  targetTile,
+  units = {},
+  inventory = {},
+  storedFood = 0,
+  water = 0,
+  ownedCoords = [],
+  abandonedCoords = [],
+  nowMs = 0,
+  efficiencyPenalty = 0,
+}) {
+  if (!targetTile?.buildable || targetTile?.isObelisk) {
+    return { allowed: false, reason: 'Target tile is not colonizable.', plan: null };
+  }
+  const key = `${to.x},${to.y}`;
+  if ((ownedCoords ?? []).some((c) => `${c.x},${c.y}` === key)) {
+    return { allowed: false, reason: 'You already own this territory.', plan: null };
+  }
+  if ((abandonedCoords ?? []).some((c) => `${c.x},${c.y}` === key)) {
+    return { allowed: false, reason: 'Abandoned villages must be conquered with a Knight.', plan: null };
+  }
+  if ((units.builder ?? 0) < 1) {
+    return { allowed: false, reason: 'Requires at least 1 Builder.', plan: null };
+  }
+
+  const basePlan = calculateContinentExpeditionPlan({
+    from,
+    to,
+    units,
+    nowMs,
+    efficiencyPenalty,
+  });
+  const requiredCarry = calculateStorageUsed(COLONY_STARTER_COST);
+  const foodNeeded = basePlan.foodNeeded * 2;
+  const waterNeeded = basePlan.waterNeeded * 2;
+  const hasSupplies = Object.entries(COLONY_STARTER_COST).every(
+    ([id, q]) => (inventory[id] ?? 0) >= q,
+  );
+
+  let reason = null;
+  if (basePlan.carryCapacity < requiredCarry) {
+    reason = `Needs ${requiredCarry} carry capacity (assign Caravans, Wagons, or Ships).`;
+  } else if (!hasSupplies) {
+    reason = 'Missing colonization starter supplies.';
+  } else if (storedFood < foodNeeded || water < waterNeeded) {
+    reason = `Needs ${foodNeeded} Food and ${waterNeeded} Water (2× expedition rations).`;
+  }
+
+  return {
+    allowed: reason === null,
+    reason,
+    plan: {
+      ...basePlan,
+      foodNeeded,
+      waterNeeded,
+      requiredCarry,
+      starterCost: COLONY_STARTER_COST,
+    },
+  };
+}
+
+/**
+ * Validates and plans an expedition to defeat Bandits and conquer/revive an Abandoned Village
+ * (`>= 1 Knight` consumed on victory + military attack >= bandit garrison defense).
+ *
+ * @param {object} params
+ * @returns {{
+ *   allowed: boolean,
+ *   reason: string | null,
+ *   banditPower: number,
+ *   combatAttack: number,
+ *   plan: object | null,
+ * }} Conquest plan and combat validation outcome.
+ */
+export function calculateConquerAbandonedPlan({
+  from,
+  to,
+  units = {},
+  abandonedMainTier = 2,
+  unitTiers = {},
+  storedFood = 0,
+  water = 0,
+  nowMs = 0,
+  efficiencyPenalty = 0,
+}) {
+  const banditPower = Math.max(1, Number(abandonedMainTier) || 1) * 40;
+  const combatUnitIds = ['spearman', 'swordsman', 'archer', 'cavalry', 'knight'];
+  const combatAttack = combatUnitIds.reduce((sum, id) => {
+    const qty = Math.max(0, Math.floor(units[id] ?? 0));
+    if (qty <= 0) return sum;
+    return sum + qty * getUnitCombatStats(id, unitTiers?.[id] ?? UNITS[id]?.tier).attack;
+  }, 0);
+
+  if ((units.knight ?? 0) < 1) {
+    return {
+      allowed: false,
+      reason: 'Requires at least 1 Knight (consumed to claim & revive the village).',
+      banditPower,
+      combatAttack,
+      plan: null,
+    };
+  }
+
+  const plan = calculateContinentExpeditionPlan({
+    from,
+    to,
+    units,
+    nowMs,
+    efficiencyPenalty,
+  });
+
+  let reason = null;
+  if (combatAttack < banditPower) {
+    reason = `Bandit garrison defense is ${banditPower} (your squad attack: ${combatAttack}).`;
+  } else if (storedFood < plan.foodNeeded || water < plan.waterNeeded) {
+    reason = `Needs ${plan.foodNeeded} Food and ${plan.waterNeeded} Water.`;
+  }
+
+  return {
+    allowed: reason === null,
+    reason,
+    banditPower,
+    combatAttack,
+    plan,
+  };
 }

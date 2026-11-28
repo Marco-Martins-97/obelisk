@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import {
+  BUILDING_DEGRADATION_GRACE_DAYS,
   DEFAULT_CONTINENT_SIZE,
   DEFAULT_TERRITORY_SIZE,
   ROCK_TYPES,
@@ -26,7 +27,7 @@ import {
   VillageLogModal,
   VillageSidebarPanels,
 } from './components/VillageHud.jsx';
-import { useStoneAgeVillage } from './hooks/useStoneAgeVillage.js';
+import { createInitialVillageState, useStoneAgeVillage } from './hooks/useStoneAgeVillage.js';
 
 const DEFAULT_SANDBOX_CONFIG = {
   seed: 'obelisk-alpha',
@@ -76,6 +77,41 @@ function saveAbandonedVillages(key, list) {
   }
 }
 
+/** Reads whether any owned territory (other than `activeCoords`) already has a Tier 5 Capital. */
+function checkExistingCapitalInStorage(ownedTerritories, activeCoords, getStorageKey) {
+  for (const t of ownedTerritories ?? []) {
+    if (t.x === activeCoords.x && t.y === activeCoords.y) continue;
+    try {
+      const raw = window.localStorage.getItem(getStorageKey(t.x, t.y));
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      const main = parsed?.buildings?.find((b) => b.buildingId === 'main');
+      if ((main?.tier ?? 1) >= 5) return true;
+    } catch {
+      // Ignore malformed saves cleanly.
+    }
+  }
+  return false;
+}
+
+/** Reads saved mainTier values for abandoned villages so Bandit power scales accurately. */
+function loadAbandonedTiers(abandonedCoords, getStorageKey) {
+  const tiers = {};
+  for (const c of abandonedCoords ?? []) {
+    try {
+      const raw = window.localStorage.getItem(getStorageKey(c.x, c.y));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const main = parsed?.buildings?.find((b) => b.buildingId === 'main');
+        tiers[`${c.x},${c.y}`] = main?.tier ?? 2;
+      }
+    } catch {
+      // Fallback to tier 2.
+    }
+  }
+  return tiers;
+}
+
 /**
  * Shared playable Stone Age workspace parameterized for either Online (`/`) or Sandbox (`/sandbox`).
  * Online hides all dev telemetry and tile info (`coordsOnlyTooltip`), whereas Sandbox mounts
@@ -118,9 +154,13 @@ function PlayableVillageWorkspace({
   onHoverSubTile,
   onSelectContinentTile,
   abandonedCoords = [],
+  abandonedTiers = {},
   ownedTerritories = [],
   onSelectTerritory = null,
   marketStorageKey = null,
+  hasExistingCapital = false,
+  onColonizeComplete = null,
+  onConquerComplete = null,
   onStartNewVillage = null,
   topControls = null,
 }) {
@@ -134,7 +174,15 @@ function PlayableVillageWorkspace({
     continent,
     fixedSpeedFactor: isOnline ? 6 : null,
     marketStorageKey,
+    hasExistingCapital,
+    onColonizeComplete,
+    onConquerComplete,
   });
+
+  const villageWithCapitalFlag = useMemo(
+    () => ({ ...village, hasExistingCapital }),
+    [village, hasExistingCapital],
+  );
 
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
   const [tileMenu, setTileMenu] = useState(null);
@@ -286,6 +334,7 @@ function PlayableVillageWorkspace({
           onRepairBuilding={village.repairBuilding}
           onRepairAllBuildings={village.repairAllBuildings}
           onUpgradeBuilding={village.startUpgradeBuilding}
+          onUpgradeBuildingTier={village.startUpgradeBuildingTier}
           onDemolishBuilding={(instanceId) => {
             if (selectedBuildingId === instanceId) setSelectedBuildingId(null);
             village.demolishBuilding(instanceId);
@@ -302,13 +351,14 @@ function PlayableVillageWorkspace({
       <BuildingModal
         building={selectedBuilding}
         state={village.state}
-        village={village}
+        village={villageWithCapitalFlag}
         territory={territory}
         maxPop={village.maxPop}
         popUsed={village.popUsed}
         freeUnits={village.freeUnits}
         onClose={() => setSelectedBuildingId(null)}
         onTrainUnit={village.trainUnit}
+        onRefitUnitTier={village.refitUnitTier}
         onDismissUnit={village.dismissUnit}
         onUpgradeBuilding={village.startUpgradeBuilding}
         onUpgradeBuildingTier={village.startUpgradeBuildingTier}
@@ -328,6 +378,9 @@ function PlayableVillageWorkspace({
         targetTile={continentMenuTile}
         spawnTile={spawnTile}
         village={village}
+        ownedTerritories={ownedTerritories}
+        abandonedCoords={abandonedCoords}
+        abandonedTiers={abandonedTiers}
         onClose={() => setContinentMenuTile(null)}
       />
 
@@ -340,6 +393,7 @@ function PlayableVillageWorkspace({
       <TechnologiesModal
         isOpen={activeHudModal === 'techs'}
         unlockedTechs={village.state.unlockedTechs}
+        unlockedBlueprints={village.state.unlockedBlueprints ?? []}
         onClose={() => setActiveHudModal(null)}
       />
 
@@ -361,9 +415,13 @@ function PlayableVillageWorkspace({
 function OnlinePage() {
   const seed = 'obelisk-alpha';
   const abandonedKey = `obelisk_abandoned_online_${seed}_v1`;
+  const coloniesKey = `obelisk_colonies_online_${seed}_v1`;
   const [abandonedVillages, setAbandonedVillages] = useState(() =>
     loadAbandonedVillages(abandonedKey),
   );
+  const [extraColonies, setExtraColonies] = useState(() => loadAbandonedVillages(coloniesKey));
+  const [selectedCoords, setSelectedCoords] = useState(null);
+
   const continent = useMemo(
     () => generateContinent(seed, { size: DEFAULT_CONTINENT_SIZE }),
     [seed],
@@ -374,10 +432,93 @@ function OnlinePage() {
     () => pickStarterSpawnTile(continent, spawnSeed, abandonedVillages),
     [continent, spawnSeed, abandonedVillages],
   );
+  const ownedTerritories = useMemo(() => {
+    const base = [{ x: spawnTile.x, y: spawnTile.y }];
+    for (const c of extraColonies) {
+      if (!base.some((t) => t.x === c.x && t.y === c.y) && c.x < continent.size && c.y < continent.size) {
+        base.push({ x: c.x, y: c.y });
+      }
+    }
+    return base;
+  }, [spawnTile.x, spawnTile.y, extraColonies, continent.size]);
+
+  const activeCoords =
+    selectedCoords && ownedTerritories.some((t) => t.x === selectedCoords.x && t.y === selectedCoords.y)
+      ? selectedCoords
+      : spawnTile;
+  const activeTile = continent.tiles[activeCoords.y * continent.size + activeCoords.x];
+  const getStorageKey = (x, y) =>
+    x === spawnTile.x && y === spawnTile.y
+      ? 'obelisk_online_village_v1'
+      : `obelisk_online_village_v1_${seed}_${x}_${y}`;
   const territory = useMemo(() => {
-    const context = getWorldTileContext(continent, spawnTile.x, spawnTile.y);
-    return generateTerritory(spawnTile.tileSeed, context, { size: DEFAULT_TERRITORY_SIZE });
-  }, [continent, spawnTile]);
+    const context = getWorldTileContext(continent, activeCoords.x, activeCoords.y);
+    return generateTerritory(activeTile.tileSeed, context, { size: DEFAULT_TERRITORY_SIZE });
+  }, [continent, activeCoords.x, activeCoords.y, activeTile.tileSeed]);
+
+  const handleColonizeComplete = ({ x, y }) => {
+    const targetKey = getStorageKey(x, y);
+    try {
+      if (!window.localStorage.getItem(targetKey)) {
+        const techsRaw = window.localStorage.getItem(`obelisk_online_market_${seed}_v1:techs`);
+        const bpsRaw = window.localStorage.getItem(`obelisk_online_market_${seed}_v1:blueprints`);
+        const colonyState = createInitialVillageState({
+          sessionKey: `${targetKey}|${seed}|${x},${y}|${continent.size}|${DEFAULT_TERRITORY_SIZE}`,
+          seed,
+          spawnTile: { x, y },
+          continentSize: continent.size,
+          territorySize: DEFAULT_TERRITORY_SIZE,
+          globalUnlockedTechs: techsRaw ? JSON.parse(techsRaw) : null,
+          globalUnlockedBlueprints: bpsRaw ? JSON.parse(bpsRaw) : null,
+          startAsCopperColony: true,
+        });
+        window.localStorage.setItem(targetKey, JSON.stringify(colonyState));
+      }
+    } catch {
+      // Ignore storage errors cleanly.
+    }
+    const nextExtras = extraColonies.some((c) => c.x === x && c.y === y)
+      ? extraColonies
+      : [...extraColonies, { x, y }];
+    saveAbandonedVillages(coloniesKey, nextExtras);
+    setExtraColonies(nextExtras);
+  };
+
+  const handleConquerComplete = ({ x, y }) => {
+    const nextAbandoned = abandonedVillages.filter((c) => !(c.x === x && c.y === y));
+    saveAbandonedVillages(abandonedKey, nextAbandoned);
+    setAbandonedVillages(nextAbandoned);
+
+    const targetKey = getStorageKey(x, y);
+    try {
+      const raw = window.localStorage.getItem(targetKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const revived = {
+          ...parsed,
+          isAbandoned: false,
+          starvationDays: 0,
+          efficiencyPenalty: 0,
+          starvationPopLoss: 0,
+          buildings: (parsed.buildings ?? []).map((b) => ({
+            ...b,
+            condition: Math.max(60, b.condition ?? 60),
+            graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS,
+          })),
+          logs: [`Conquered and revived by your Knight!`, ...(parsed.logs ?? [])].slice(0, 24),
+        };
+        window.localStorage.setItem(targetKey, JSON.stringify(revived));
+      }
+    } catch {
+      // Ignore storage errors cleanly.
+    }
+
+    const nextExtras = extraColonies.some((c) => c.x === x && c.y === y)
+      ? extraColonies
+      : [...extraColonies, { x, y }];
+    saveAbandonedVillages(coloniesKey, nextExtras);
+    setExtraColonies(nextExtras);
+  };
 
   const handleStartNewVillage = (prevCoords) => {
     const nextAbandoned = abandonedVillages.some(
@@ -387,17 +528,22 @@ function OnlinePage() {
       : [...abandonedVillages, { x: prevCoords.x, y: prevCoords.y }];
     saveAbandonedVillages(abandonedKey, nextAbandoned);
     setAbandonedVillages(nextAbandoned);
+    setSelectedCoords(null);
   };
+
+  const hasExistingCapital = checkExistingCapitalInStorage(ownedTerritories, activeCoords, getStorageKey);
+  const abandonedTiers = loadAbandonedTiers(abandonedVillages, getStorageKey);
 
   return (
     <PlayableVillageWorkspace
-      key={`online-${seed}-${spawnTile.x}-${spawnTile.y}`}
+      key={`online-${seed}-${activeCoords.x}-${activeCoords.y}`}
       mode="online"
-      storageKey="obelisk_online_village_v1"
+      storageKey={getStorageKey(activeCoords.x, activeCoords.y)}
+      marketStorageKey={`obelisk_online_market_${seed}_v1`}
       seed={seed}
       continent={continent}
-      spawnTile={spawnTile}
-      selectedTile={spawnTile}
+      spawnTile={activeCoords}
+      selectedTile={activeTile}
       territory={territory}
       territorySize={DEFAULT_TERRITORY_SIZE}
       viewMode="gameplay"
@@ -408,6 +554,12 @@ function OnlinePage() {
       hoveredSubTile={null}
       onHoverSubTile={() => {}}
       abandonedCoords={abandonedVillages}
+      abandonedTiers={abandonedTiers}
+      ownedTerritories={ownedTerritories}
+      onSelectTerritory={setSelectedCoords}
+      hasExistingCapital={hasExistingCapital}
+      onColonizeComplete={handleColonizeComplete}
+      onConquerComplete={handleConquerComplete}
       onStartNewVillage={handleStartNewVillage}
     />
   );
@@ -486,12 +638,86 @@ function SandboxPage() {
     setSelectedCoords({ x: nextSpawn.x, y: nextSpawn.y });
   };
 
+  const getSandboxStorageKey = (x, y) =>
+    `obelisk_sandbox_village_v1_${config.seed}_${x}_${y}`;
+  const sandboxMarketKey = `obelisk_sandbox_market_${config.seed}_v1`;
+
+  const handleColonizeComplete = ({ x, y }) => {
+    const targetKey = getSandboxStorageKey(x, y);
+    try {
+      if (!window.localStorage.getItem(targetKey)) {
+        const techsRaw = window.localStorage.getItem(`${sandboxMarketKey}:techs`);
+        const bpsRaw = window.localStorage.getItem(`${sandboxMarketKey}:blueprints`);
+        const colonyState = createInitialVillageState({
+          sessionKey: `${targetKey}|${config.seed}|${x},${y}|${continent.size}|${config.territorySize}`,
+          seed: config.seed,
+          spawnTile: { x, y },
+          continentSize: continent.size,
+          territorySize: config.territorySize,
+          globalUnlockedTechs: techsRaw ? JSON.parse(techsRaw) : null,
+          globalUnlockedBlueprints: bpsRaw ? JSON.parse(bpsRaw) : null,
+          startAsCopperColony: true,
+        });
+        window.localStorage.setItem(targetKey, JSON.stringify(colonyState));
+      }
+    } catch {
+      // Ignore storage errors cleanly.
+    }
+    const nextExtras = extraColonies.some((c) => c.x === x && c.y === y)
+      ? extraColonies
+      : [...extraColonies, { x, y }];
+    saveAbandonedVillages(sandboxColoniesKey, nextExtras);
+    setColoniesMap((prev) => ({ ...prev, [sandboxColoniesKey]: nextExtras }));
+  };
+
+  const handleConquerComplete = ({ x, y }) => {
+    const nextAbandoned = abandonedVillages.filter((c) => !(c.x === x && c.y === y));
+    saveAbandonedVillages(sandboxAbandonedKey, nextAbandoned);
+    setAbandonedMap((prev) => ({ ...prev, [sandboxAbandonedKey]: nextAbandoned }));
+
+    const targetKey = getSandboxStorageKey(x, y);
+    try {
+      const raw = window.localStorage.getItem(targetKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const revived = {
+          ...parsed,
+          isAbandoned: false,
+          starvationDays: 0,
+          efficiencyPenalty: 0,
+          starvationPopLoss: 0,
+          buildings: (parsed.buildings ?? []).map((b) => ({
+            ...b,
+            condition: Math.max(60, b.condition ?? 60),
+            graceDaysRemaining: BUILDING_DEGRADATION_GRACE_DAYS,
+          })),
+          logs: [`Conquered and revived by your Knight!`, ...(parsed.logs ?? [])].slice(0, 24),
+        };
+        window.localStorage.setItem(targetKey, JSON.stringify(revived));
+      }
+    } catch {
+      // Ignore storage errors cleanly.
+    }
+
+    const nextExtras = extraColonies.some((c) => c.x === x && c.y === y)
+      ? extraColonies
+      : [...extraColonies, { x, y }];
+    saveAbandonedVillages(sandboxColoniesKey, nextExtras);
+    setColoniesMap((prev) => ({ ...prev, [sandboxColoniesKey]: nextExtras }));
+  };
+
   const activeCoords =
     selectedCoords &&
     selectedCoords.x < continent.size &&
     selectedCoords.y < continent.size
       ? selectedCoords
       : spawnTile;
+  const hasExistingCapital = checkExistingCapitalInStorage(
+    ownedTerritories,
+    activeCoords,
+    getSandboxStorageKey,
+  );
+  const abandonedTiers = loadAbandonedTiers(abandonedVillages, getSandboxStorageKey);
 
   const selectedTile = continent.tiles[activeCoords.y * continent.size + activeCoords.x];
   const rockInfo = ROCK_TYPES.find((r) => r.id === selectedTile.rockType) ?? ROCK_TYPES[0];
@@ -570,8 +796,12 @@ function SandboxPage() {
       onHoverSubTile={setHoveredSubTile}
       onSelectContinentTile={setSelectedCoords}
       abandonedCoords={abandonedVillages}
+      abandonedTiers={abandonedTiers}
       ownedTerritories={ownedTerritories}
       onSelectTerritory={setSelectedCoords}
+      hasExistingCapital={hasExistingCapital}
+      onColonizeComplete={handleColonizeComplete}
+      onConquerComplete={handleConquerComplete}
       onStartNewVillage={handleStartNewVillage}
       topControls={controls}
     />

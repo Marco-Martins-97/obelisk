@@ -70,9 +70,14 @@ describe('Stage 1.3: Territory Generator', () => {
     expect(territory.waterCount).toBeGreaterThanOrEqual(1);
 
     const forestTiles = territory.tiles.filter(
-      (t) => !t.isWater && !t.inSettlementZone && t.forestDensity >= TERRITORY_FOREST_THRESHOLD,
+      (t) => !t.isWater && !t.inSettlementZone && t.buildable && t.forestDensity >= TERRITORY_FOREST_THRESHOLD,
     );
     expect(forestTiles.length).toBeGreaterThanOrEqual(1);
+
+    const ringForestTiles = forestTiles.filter(
+      (t) => Math.max(Math.abs(t.x - 12), Math.abs(t.y - 12)) === 4,
+    );
+    expect(ringForestTiles.length).toBeGreaterThanOrEqual(1);
 
     const settlementTiles = territory.tiles.filter((t) => t.inSettlementZone);
     expect(settlementTiles).toHaveLength(49); // 7x7

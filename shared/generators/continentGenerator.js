@@ -3,6 +3,9 @@ import { ELEVATION_BANDS, ROCK_TYPES, classifyBiome } from '../config/worldGeolo
 import { createNoise2D, fbm2D } from './noise.js';
 import { createPrng, hashCoords, randomInt } from './prng.js';
 
+/** Default number of ancient Ruin sites placed deterministically across the Continent. */
+export const DEFAULT_RUIN_COUNT = 50;
+
 /**
  * Clamps a numeric value to [0, 1].
  *
@@ -22,6 +25,7 @@ function clamp01(value) {
  * @param {string | number} masterWorldSeed - Secret server world seed (or sandbox seed).
  * @param {object} [options] - Optional configuration.
  * @param {number} [options.size=DEFAULT_CONTINENT_SIZE] - Grid width & height (NxN).
+ * @param {number} [options.ruinCount=DEFAULT_RUIN_COUNT] - Number of deterministic Ruins placed on buildable tiles.
  * @returns {{
  *   seed: string | number,
  *   size: number,
@@ -35,12 +39,17 @@ function clamp01(value) {
  *     biome: string,
  *     buildable: boolean,
  *     isObelisk: boolean,
+ *     isRuin: boolean,
  *     tileSeed: number,
  *   }>,
  *   obeliskCoords: { x: number, y: number },
+ *   ruinCoords: Array<{ x: number, y: number }>,
  * }} Generated continent state.
  */
-export function generateContinent(masterWorldSeed, { size = DEFAULT_CONTINENT_SIZE } = {}) {
+export function generateContinent(
+  masterWorldSeed,
+  { size = DEFAULT_CONTINENT_SIZE, ruinCount = DEFAULT_RUIN_COUNT } = {},
+) {
   if (!Number.isInteger(size) || size < 1) {
     throw new RangeError(`Continent size must be a positive integer, received: ${size}`);
   }
@@ -113,6 +122,7 @@ export function generateContinent(masterWorldSeed, { size = DEFAULT_CONTINENT_SI
         biome,
         buildable,
         isObelisk: false,
+        isRuin: false,
         tileSeed: hashCoords(masterWorldSeed, x, y, 99),
       };
 
@@ -144,10 +154,26 @@ export function generateContinent(masterWorldSeed, { size = DEFAULT_CONTINENT_SI
   tiles[obeliskIdx].isObelisk = true;
   const obeliskCoords = { x: tiles[obeliskIdx].x, y: tiles[obeliskIdx].y };
 
+  // Place up to `ruinCount` ancient Ruins deterministically on distinct buildable non-Obelisk tiles.
+  const ruinCandidates = buildableIndices.filter((idx) => idx !== obeliskIdx);
+  const targetRuins = Math.max(0, Math.min(Math.floor(ruinCount), ruinCandidates.length));
+  const ruinRng = createPrng(hashCoords(masterWorldSeed, 0, 0, 888));
+  const ruinCoords = [];
+
+  for (let i = 0; i < targetRuins; i += 1) {
+    const swapIdx = randomInt(ruinRng, i, ruinCandidates.length - 1);
+    const chosenIdx = ruinCandidates[swapIdx];
+    ruinCandidates[swapIdx] = ruinCandidates[i];
+    ruinCandidates[i] = chosenIdx;
+    tiles[chosenIdx].isRuin = true;
+    ruinCoords.push({ x: tiles[chosenIdx].x, y: tiles[chosenIdx].y });
+  }
+
   return {
     seed: masterWorldSeed,
     size,
     tiles,
     obeliskCoords,
+    ruinCoords,
   };
 }

@@ -64,6 +64,14 @@ describe('Stage 1.2: Continent Generator', () => {
     expect(continent.size).toBe(100);
     expect(continent.tiles).toHaveLength(10000);
     expect(elapsedMs).toBeLessThan(50);
+
+    const ruins = continent.tiles.filter((t) => t.isRuin);
+    expect(ruins).toHaveLength(50);
+    expect(continent.ruinCoords).toHaveLength(50);
+    for (const r of ruins) {
+      expect(r.buildable).toBe(true);
+      expect(r.isObelisk).toBe(false);
+    }
   });
 
   it('exercises wide [0, 1] range producing deep oceans (< 0.25) and mountains (> 0.78)', () => {

@@ -58,9 +58,11 @@ Tools are **permanent, player-persistent technologies** rather than physical sto
 | **`stone_axe`..`stone_hammer`**, **`stone_knife`**, **`stone_sickle`** | T2 Research | Build **`SMITHY`** | At `SMITHY` / `FORGE` (`bones` + `sticks`/`small_stones`) | Unlocks Copper Age extraction, `N/P/K` farming, wells, granaries, walls, markets, outposts |
 | **`copper_*`**, **`wood_bow`**, **`copper_sword`**, **`wood_shield`** | T2 Research | Prerequisite starter tool | `{ copper_ingot, sticks, ... }` at `SMITHY` / `FORGE` | **`+35%`** work speed, `Workshop` (`copper_saw`), `Smokehouse` (`copper_knife`), `Barracks` troops |
 | **`bronze_age`** | T3 Passive | Smelt **`1 bronze_ingot`** at `KILN` / `FORGE` | Automatic passive unlock | Upgrades `MAIN` to Bronze Age (`Tier 3`) + unlocks **`FORGE`** (`copper_hammer`) |
-| **`bronze_*`**, **`composite_bow`**, **`bronze_sword`**, **`bronze_shield`**, **`bronze_armor`** | T3 Research | Build **`FORGE`** (`bronze_age` + `copper_hammer`) | At `FORGE` (`bronze_ingot`, `planks`, `leather`) | Unlocks `Port` (`bronze_saw`), `Bloomery` (`bronze_pickaxe` + `bronze_hammer`), Barracks Bronze refits |
+| **`bronze_*`**, **`composite_bow`**, **`bronze_sword`**, **`bronze_shield`**, **`bronze_armor`** | T3 Research | Upgrade `SMITHY` to T3 (`Bronze Forge`) | At `SMITHY` T3 (`bronze_ingot`, `planks`, `leather`) | Unlocks `Port` (`bronze_saw`), `Watchtower` (`bronze_spear`), Barracks Bronze refits |
 | **`leather_working`**, **`leather_armor`**, **`saddle`** | T2 Research | Build **`WORKSHOP`** | At `WORKSHOP` | `[Research] -> [Craft]` `leather`; unlocks `Cavalry` (`saddle`) & unit armors |
-| **`iron_age`** | T4 Passive | Smelt **`1 iron_ingot`** at `BLOOMERY` | Automatic passive unlock | Unlocks Iron Age (`MAIN` Tier 4) |
+| **`iron_age`** | T4 Passive | Smelt **`1 iron_ingot`** at `KILN` T3 (`Bloomery`) | Automatic passive unlock | Unlocks Iron Age (`MAIN` Tier 4) |
+| **`iron_*`**, **`longbow`**, **`crossbow`** *(Blueprint)*, **`iron_sword`**, **`iron_shield`**, **`iron_armor`** | T4 Research | Upgrade `SMITHY` to T4 (`Iron Blacksmith`) | At `SMITHY` T4 (`iron_ingot`, `planks`, `leather`, `rope`) | Unlocks `Knight`, `Heavy Wagon`, `Merchant Ship`, Iron refits, `Windmill`/`Watermill` (`iron_saw` + Blueprint) |
+| **`steel_age`** | T5 Passive | Smelt **`1 steel_ingot`** at `KILN` T4 (`Blast Furnace`) | Automatic passive unlock | Unlocks Steel Age (`MAIN` Tier 5 Capital) |
 
 ---
 
