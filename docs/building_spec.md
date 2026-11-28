@@ -53,12 +53,11 @@ MongoDB stores only dynamic building instances per settlement:
 
 ### 2.1 `MAIN` Tier vs. Building Level & Age Downgrade Rules
 - **Age Controller (`MAIN.tier`):** Each village tracks its own `MAIN` Tier (`1` Stone → `2` Copper → `3` Bronze → `4` Iron → `5` Steel), while `MAIN.level` (`1..3`) scales local storage and housing capacity.
-- **Building Inheritance on Newly Claimed Villages:** Player technologies persist globally across claimed territories, while each new village starts its local `MAIN` Tier from Tier 1 and upgrades buildings independently.
+- **Base-Tier Placement & Direct Tier Advancement:** Newly placed buildings start at their template base unlock Tier (`def.tier`) and can advance Tier directly at any level (`Lv 1..maxLevel`, resetting to `Lv 1`) whenever `MAIN.tier >= targetTier`.
 - **Free Tier Downgrade:** Players may freely downgrade `MAIN.tier` (`0` cost) to return that village to an earlier Age:
   - Existing buildings keep their higher Tier and stats.
-  - Newly placed buildings are constructed at the **current `MAIN.tier`**.
-  - Higher-tier upgrades/progression remain locked while `MAIN.tier` is downgraded.
-- **Upgrading `MAIN` Tier:** Always consumes normal materials and builder round-trip time (even after a prior downgrade), gated by the corresponding Age tech unlock (e.g., `copper_age` for Tier 2, `bronze_age` for Tier 3, `iron_age` for Tier 4).
+  - Higher-tier upgrades remain locked while `MAIN.tier` is below the target Tier.
+- **Upgrading `MAIN` Tier:** Always consumes normal materials and builder round-trip time (even after a prior downgrade), gated by the corresponding Age tech unlock (`copper_age` T2, `bronze_age` T3, `iron_age` T4, `steel_age` T5).
 
 ---
 
@@ -71,9 +70,9 @@ MongoDB stores only dynamic building instances per settlement:
    - Any active task (`build`, `upgrade`, `upgrade_main`, `upgrade_tier`, `upgrade_wall`, `craft`, `research`, `train_unit`, `unit_action`, `expedition`, `prospect`) can be cancelled cleanly via `canCancelTask` (`TASK_CANCEL_WINDOW_RATIO = 0.1`) during the **first `10%` of total virtual duration**, refunding spent materials, livestock, water bowls, food, freed units/builders, and reverting incomplete buildings/walls.
 2. **Left-Click Building Interaction (`BuildingModal`):**
    - **Initial Construction (`constructing`):** Displays `"Building..."`, real-time `HH:MM:SS` completion/return countdown timers, and a `Cancel` button while within the first `10%`.
-   - **Active & Upgrading (`active`):** Level/Tier upgrades keep `status: 'active'` so players can continue grouped single-`Craft` production (`via Ore`/`via Nuggets`, batch `qty` + `Max`), researching pending techs (moving completed techs into a bottom `Researched Technologies` dropdown), queued timed unit recruitment/dismissal (`Train +1` / `Dispense -1` with unit training durations, white names & availability-colored `free/total` counts), cancelling queued work in `Active Work Queue`, repairing/destroying buildings, and viewing exact next-level/tier stat previews (`getBuildingUpgradePreview`) alongside `have/needed` red missing-cost highlights (`CostInline`) and real-time `HH:MM:SS` durations.
+   - **Active & Sequential Queue (`active`):** Crafting, unit training, and research inside a building run sequentially **1 item/unit at a time** (stacking consecutive identical orders onto the same queue line with upfront resource deduction). Via `getTaskCancelInfo`, the active 1st item locks after its first `10%`, while waiting items `2..N` and unstarted queued entries remain refundable (`Cancel Queued`). Windmills & Watermills likewise craft 1 item at a time round-robin across `1..3` slots, deducting inputs upfront per craft.
 3. **Right-Click Menus (`TileActionMenu`):**
-   - **Placed Buildings:** Opens quick actions (`Open`, `Repair`, `Repair All`, `Quick Harvest`, `Quick Craft`, `Upgrade` with real-time `HH:MM:SS`, `Destroy Building` with confirmation) plus a `Tile Actions (Gather / Hunt)` toggle.
+   - **Placed Buildings:** Opens quick actions (`Open`, `Repair`, `Repair All`, `Quick Harvest`, `Quick Craft`, `Upgrade`, `Advance to Tier X`, `Destroy Building` with confirmation) plus a `Tile Actions (Gather / Hunt)` toggle.
    - **Empty Tiles (`[Build >]`):** Buttons use `data-build-status` styling (`ready` green, `grey` missing resources, `red` locked/blocked) and show real-time `HH:MM:SS` durations via `formatRealHoursHMS`, while the footer displays `have/needed Resource` cost items.
 4. **Safe Building Destruction (`demolishBuilding`):**
    - Permanently removes non-`MAIN` buildings with 0 material refund and clamps water, blocking demolition if `maxPop < popUsed` or dependent Farmstead attachments would be stranded.

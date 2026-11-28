@@ -26,7 +26,7 @@ Generates an `M×M` regional grid from `(tileSeed, worldTileContext)`:
 - **Neighbor Interpolation:** Smoothly interpolates `elevation` and `temperature` from the center tile and its cardinal continent neighbors (`north`, `south`, `east`, `west`), plus local micro-noise.
 - **Water (Lakes, Rivers & Minimum Guarantee):** Carves local lakes and downhill streams, guaranteeing **at least 1 water tile** (`spring` fallback) per territory.
 - **Water-Driven Moisture:** Computed via multi-source BFS distance from Territory water tiles (`isWater`).
-- **Forest Layer:** Territory-only `forestDensity` (`0.0`–`1.0`) guaranteeing **at least 1 forest tile** (`>= 0.52`) outside water and the settlement zone.
+- **Forest Layer:** Territory-only `forestDensity` (`0.0`–`1.0`) guaranteeing **at least 1 buildable forest tile** (`>= 0.52`) on the immediate `9×9` ring adjacent to the centered `7×7` settlement zone (outside water).
 - **Per-Ore Prospecting Layers:** No pre-spawned ore nodes; instead, each ore hosted by the parent tile's `rockType` gets an independent `ores[oreId]` (`0.0`–`1.0`) density field scaled by ore rarity (`common` → broader veins, `very_rare` → tiny concentrated pockets).
 - **Settlement Zone & Spawn Rules:**
   - Reserves a dry, forest-free central `7×7` buildable pad (`inSettlementZone`) at terrain generation time so settlements can expand safely up to `Steel` Tier without hitting lakes or forests.
