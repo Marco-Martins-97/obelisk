@@ -43,8 +43,15 @@ MongoDB stores only dynamic building instances per settlement:
 | **`FARM` / `CROP_FIELD` / `ANIMAL_PEN` / `ORCHARD`** | `FARM` protects seed vault & caps adjacent `Crop Field` (64 slots, `N/P/K` soil nutrients), `Animal Pen` (livestock capture + `Kill -1` slaughter), and `Orchard` (9 saplings). | `1..3` | Requires `stone_hoe`; attachments must be placed adjacent to active `FARM` |
 | **`GRANARY`** | Dedicated food warehouse reducing daily spoilage by `-60%` (highest spoil first). | `1..3` | Requires `stone_hammer`; `preservedStorageTierBases: { 2: 500, 3: 1500 }` |
 | **`MARKET`** | Crafts `Caravan` (`1 donkey + 1 pop`, `150` bulk carry) & swaps goods `1:1`. | `1..3` | Requires `stone_hammer`; `workersRequired: 1` |
-| **`EXPEDITION_OUTPOST`** | Trains mounted `Scout` (`1 horse + 1 pop`) & dispatches Continent expeditions. | `1..3` | Requires `stone_hammer`; `workersRequired: 1` |
-| **`WALL`** | Internal fortification built & upgraded inside `MAIN`; adds defense % & cuts building degradation. | `1..3` | Requires `stone_spear`; built inside `MAIN` (`defenseTierBases: { 2: 15, 3: 45 }`) |
+| **`EXPEDITION_OUTPOST`** | Trains mounted `Scout` (`1 horse + 1 pop`, `0.25h`) & dispatches Continent expeditions. | `1..3` | Requires `stone_hammer`; `workersRequired: 1` |
+| **`WALL`** | Internal perimeter fortification inside `MAIN` (Wood → Stone → Brick); protects active City zone tiles (`0 / 1×1 / 3×3 / 5×5 / 7×7` by `MAIN` Tier) & cuts building degradation. | `1..3` | Requires `stone_spear`; built inside `MAIN` (`defenseTierBases: { 1: 10, 2: 15, 3: 45, 4: 70 }`) |
+| **`WORKSHOP`** | Saws `wood_logs` → `planks`, tans `pelts` → `leather`, braids `rope`, weaves baskets, and researches `leather_working` / `leather_armor` / `saddle`. | `1..3` | Tier 2 (`copper_saw`); `workersRequired: 1` |
+| **`SMOKEHOUSE`** | Replaces `FIREPIT` & `DRYING_RACK` (`maxTier: 3`); cooks, cures, bakes `bread`, and smokes durable meat/fish. | `1..3` | Tier 3 (`copper_knife`); `workersRequired: 1` |
+| **`FORGE`** | Bronze Forge replacing `KILN` & `SMITHY` (`maxTier: 3`); smelts vessels/ingots and researches Bronze tools, weapons & armors. | `1..3` | Tier 3 (`bronze_age`, `copper_hammer`); `workersRequired: 2` |
+| **`BLOOMERY`** | High-draft furnace smelting `iron_ore`/`iron_nuggets` + `flux` + `charcoal` → `iron_ingot` (triggers `iron_age`). | `1..3` | Tier 3 (`bronze_pickaxe`, `bronze_hammer`); `workersRequired: 2` |
+| **`WATCHTOWER`** | High-garrison tower (`3` pop) projecting a yellow `3×3` aura of defense & degradation protection (`20%`/`50%`/`75%`; overlaps City Wall via `max()`). | `1..3` | Tier 2 base (`stone_spear`), `maxTier: 3`; `workersRequired: 3` |
+| **`PORT`** | Coastal/river dock (`near_water`) fishing continuously (`15/40/d`) and building `Fishing Boat` & `Transport Ship`. | `1..3` | Tier 3 (`bronze_saw`); `workersRequired: 2` |
+| **`BARRACKS`** | Trains `Spearman`, `Swordsman`, `Archer` & `Cavalry` from weapon/armor techs and batch-refits Copper troops → Bronze (`Option B`). | `1..3` | Tier 2 base (`stone_spear`), `maxTier: 3`; `workersRequired: 1` |
 
 ### 2.1 `MAIN` Tier vs. Building Level & Age Downgrade Rules
 - **Age Controller (`MAIN.tier`):** Each village tracks its own `MAIN` Tier (`1` Stone → `2` Copper → `3` Bronze → `4` Iron → `5` Steel), while `MAIN.level` (`1..3`) scales local storage and housing capacity.
@@ -53,29 +60,30 @@ MongoDB stores only dynamic building instances per settlement:
   - Existing buildings keep their higher Tier and stats.
   - Newly placed buildings are constructed at the **current `MAIN.tier`**.
   - Higher-tier upgrades/progression remain locked while `MAIN.tier` is downgraded.
-- **Upgrading `MAIN` Tier:** Always consumes normal materials and builder round-trip time (even after a prior downgrade), gated by the corresponding Age tech unlock (e.g., `copper_age` for Tier 2).
+- **Upgrading `MAIN` Tier:** Always consumes normal materials and builder round-trip time (even after a prior downgrade), gated by the corresponding Age tech unlock (e.g., `copper_age` for Tier 2, `bronze_age` for Tier 3, `iron_age` for Tier 4).
 
 ---
 
 ## 3. Core Building & Interaction Rules
-1. **Round-Trip Construction Lifecycle & Population Usage:**
+1. **Round-Trip Construction Lifecycle, Population Usage & 10% Cancel Window:**
    - Creating a building consumes materials, employs `workersRequired` population, and locks `>= 1` `builder` across a round-trip lifecycle (`1 tile = 500m` / `0.5 km` from `MAIN (12, 12)` to target `(x, y)`):
      - **Traveling (`t_travel`):** Builder walks `MAIN → tile`.
      - **Working (`t_build`):** Building finishes and becomes active at `now + t_travel + t_build`.
      - **Returning (`t_travel`):** Builder walks `tile → MAIN`, unlocks availability, and reveals the `3×3` Territory border around `(x, y)` at `now + 2 * t_travel + t_build`.
+   - Any active task (`build`, `upgrade`, `upgrade_main`, `upgrade_tier`, `upgrade_wall`, `craft`, `research`, `train_unit`, `unit_action`, `expedition`, `prospect`) can be cancelled cleanly via `canCancelTask` (`TASK_CANCEL_WINDOW_RATIO = 0.1`) during the **first `10%` of total virtual duration**, refunding spent materials, livestock, water bowls, food, freed units/builders, and reverting incomplete buildings/walls.
 2. **Left-Click Building Interaction (`BuildingModal`):**
-   - **Initial Construction (`constructing`):** Displays `"Building..."` and real-time `HH:MM:SS` completion/return countdown timers.
-   - **Active & Upgrading (`active`):** Level/Tier upgrades keep `status: 'active'` so players can continue grouped single-`Craft` production (`via Ore`/`via Nuggets`, batch `qty` + `Max`), researching pending techs (moving completed techs into a bottom `Researched Technologies` dropdown), training/dispensing units (`Train +1` / `Dispense -1`), repairing/destroying buildings, and viewing exact next-level/tier stat previews (`getBuildingUpgradePreview`) alongside `have/needed` red missing-cost highlights (`CostInline`) and real-time `HH:MM:SS` durations.
+   - **Initial Construction (`constructing`):** Displays `"Building..."`, real-time `HH:MM:SS` completion/return countdown timers, and a `Cancel` button while within the first `10%`.
+   - **Active & Upgrading (`active`):** Level/Tier upgrades keep `status: 'active'` so players can continue grouped single-`Craft` production (`via Ore`/`via Nuggets`, batch `qty` + `Max`), researching pending techs (moving completed techs into a bottom `Researched Technologies` dropdown), queued timed unit recruitment/dismissal (`Train +1` / `Dispense -1` with unit training durations, white names & availability-colored `free/total` counts), cancelling queued work in `Active Work Queue`, repairing/destroying buildings, and viewing exact next-level/tier stat previews (`getBuildingUpgradePreview`) alongside `have/needed` red missing-cost highlights (`CostInline`) and real-time `HH:MM:SS` durations.
 3. **Right-Click Menus (`TileActionMenu`):**
    - **Placed Buildings:** Opens quick actions (`Open`, `Repair`, `Repair All`, `Quick Harvest`, `Quick Craft`, `Upgrade` with real-time `HH:MM:SS`, `Destroy Building` with confirmation) plus a `Tile Actions (Gather / Hunt)` toggle.
    - **Empty Tiles (`[Build >]`):** Buttons use `data-build-status` styling (`ready` green, `grey` missing resources, `red` locked/blocked) and show real-time `HH:MM:SS` durations via `formatRealHoursHMS`, while the footer displays `have/needed Resource` cost items.
 4. **Safe Building Destruction (`demolishBuilding`):**
    - Permanently removes non-`MAIN` buildings with 0 material refund and clamps water, blocking demolition if `maxPop < popUsed` or dependent Farmstead attachments would be stranded.
 5. **Settlement Limits (Capital vs. Villages):**
-   - **Capital (`7×7`):** A player may upgrade only **1** settlement to a Capital.
-   - **Cities / Villages (`5×5`):** Players may own multiple villages.
+   - **Capital (`7×7`):** A player may upgrade only **1** settlement to a Capital; active fortified City bounds follow `MAIN` Tier (`0 / 1×1 / 3×3 / 5×5 / 7×7`).
+   - **Cities / Villages (`5×5`):** Players may own multiple villages (`+ Spawn Colony` in Sandbox).
    - **Open Edge Case (Deferred to Conquest Stage):** Conquering another player's Capital (auto-downgrade to `5×5` vs. hard cap).
 6. **Degradation, 3-Day Buffer, Repair & Abandonment:**
-   - Active buildings start at `condition: 100` with `graceDaysRemaining: 3` (`BUILDING_DEGRADATION_GRACE_DAYS`), then lose `2%/day` (`4%/day` in Winter, reduced up to `80%` by internal `City Wall`).
+   - Active buildings start at `condition: 100` with `graceDaysRemaining: 3` (`BUILDING_DEGRADATION_GRACE_DAYS`), then lose `2%/day` (`4%/day` in Winter, reduced up to `80%` by internal `City Wall` inside active City tiles or covering `Watchtower` `3×3` auras without additive stacking).
    - Degradation scales continuous production efficiency; players repair individual buildings or `Repair All` inside `MAIN`.
    - If average active building condition falls below `20%` (`VILLAGE_ABANDON_AVG_CONDITION`), the village becomes **Abandoned**; clicking **Start New Village** relocates to a fresh Continent tile while keeping the ruined village marked on the Continent map.

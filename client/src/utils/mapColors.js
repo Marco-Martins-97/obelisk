@@ -117,3 +117,35 @@ export function formatDevTileValue(tile, layer) {
   if (tile.isWater) return 'WTR';
   return (tile.biome ?? '').slice(0, 3).toUpperCase();
 }
+
+/**
+ * Distinct Territory canvas fill colors and short monospace badges per building template.
+ */
+export const BUILDING_COLORS = Object.freeze({
+  main: { fill: '#f59e0b', badge: 'M' },
+  firepit: { fill: '#ea580c', badge: 'FP' },
+  house: { fill: '#10b981', badge: 'H' },
+  warehouse: { fill: '#a16207', badge: 'W' },
+  drying_rack: { fill: '#f97316', badge: 'DR' },
+  kiln: { fill: '#d97706', badge: 'K' },
+  smithy: { fill: '#f43f5e', badge: 'SM' },
+  timber_camp: { fill: '#15803d', badge: 'TC' },
+  mine: { fill: '#64748b', badge: 'MN' },
+  quarry: { fill: '#94a3b8', badge: 'Q' },
+  clay_pit: { fill: '#b45309', badge: 'CP' },
+  well: { fill: '#0284c7', badge: 'WL' },
+  farm: { fill: '#84cc16', badge: 'FM' },
+  crop_field: { fill: '#65a30d', badge: 'CF' },
+  animal_pen: { fill: '#ca8a04', badge: 'AP' },
+  orchard: { fill: '#22c55e', badge: 'OR' },
+  granary: { fill: '#eab308', badge: 'GR' },
+  market: { fill: '#8b5cf6', badge: 'MK' },
+  expedition_outpost: { fill: '#06b6d4', badge: 'EX' },
+  workshop: { fill: '#c2410c', badge: 'WS' },
+  smokehouse: { fill: '#dc2626', badge: 'SH' },
+  forge: { fill: '#e11d48', badge: 'FG' },
+  bloomery: { fill: '#475569', badge: 'BF' },
+  watchtower: { fill: '#facc15', badge: 'WT' },
+  port: { fill: '#0ea5e9', badge: 'PT' },
+  barracks: { fill: '#be123c', badge: 'BK' },
+});

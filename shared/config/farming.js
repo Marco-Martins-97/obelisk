@@ -13,6 +13,8 @@
  * @param {string} config.name - Human-readable display name.
  * @param {string} config.seedItemId - Inventory/reserve item ID consumed to plant 1 slot.
  * @param {string} config.harvestItemId - Inventory item ID produced on harvest.
+ * @param {string | null} [config.secondaryHarvestItemId=null] - Optional secondary byproduct item ID on harvest (e.g., straw).
+ * @param {number} [config.secondaryYieldRatio=0] - Fraction of primary harvest dropped as secondary byproduct.
  * @param {'A' | 'B' | 'C'} config.nutrientType - TFC-inspired soil nutrient consumed per cycle.
  * @param {number} [config.nutrientCost=30] - Nutrient points (out of 100) consumed across growth.
  * @param {number} [config.growthDays=60] - In-game days to mature when planted in Spring.
@@ -34,6 +36,8 @@ export function createCrop(config) {
     name: config.name,
     seedItemId: config.seedItemId,
     harvestItemId: config.harvestItemId,
+    secondaryHarvestItemId: config.secondaryHarvestItemId ?? null,
+    secondaryYieldRatio: config.secondaryYieldRatio ?? 0,
     nutrientType: config.nutrientType ?? 'A',
     nutrientCost: config.nutrientCost ?? 30,
     growthDays: config.growthDays ?? 60,
@@ -127,6 +131,8 @@ export const CROPS = Object.freeze({
     name: 'Wheat / Grain',
     seedItemId: 'grain',
     harvestItemId: 'grain',
+    secondaryHarvestItemId: 'straw',
+    secondaryYieldRatio: 0.6,
     nutrientType: 'N',
     nutrientCost: 30,
     growthDays: 60,
@@ -135,7 +141,7 @@ export const CROPS = Object.freeze({
     maxTempC: 32,
     yieldMin: 3,
     yieldMax: 10,
-    description: 'Staple grain seeded in Spring (Nutrient N - Nitrogen); yields 3..10 per surviving slot.',
+    description: 'Staple grain seeded in Spring (Nutrient N - Nitrogen); harvests both Grain and Straw stalks.',
   }),
   flax: createCrop({
     id: 'flax',

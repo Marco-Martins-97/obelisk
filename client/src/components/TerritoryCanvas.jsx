@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getExploredBounds, normalizedTempToCelsius } from '@obelisk/shared';
-import { getDevTileColor } from '../utils/mapColors.js';
+import {
+  getCityZoneBounds,
+  getExploredBounds,
+  getWatchtowerTileDefense,
+  isTileInCityZone,
+  normalizedTempToCelsius,
+} from '@obelisk/shared';
+import { BUILDING_COLORS, getDevTileColor } from '../utils/mapColors.js';
 import {
   clampPanOffsets,
   getViewportForBounds,
@@ -12,28 +18,6 @@ import { drawGameplayMarker, drawSurfaceTile } from '../utils/tileSprites.js';
 
 const CANVAS_SIZE = 672;
 const MAX_TILE_SIZE = 72;
-
-const BUILDING_COLORS = {
-  main: { fill: '#f59e0b', badge: 'M' },
-  firepit: { fill: '#ea580c', badge: 'FP' },
-  house: { fill: '#10b981', badge: 'H' },
-  warehouse: { fill: '#a16207', badge: 'W' },
-  drying_rack: { fill: '#f97316', badge: 'DR' },
-  kiln: { fill: '#d97706', badge: 'K' },
-  smithy: { fill: '#f43f5e', badge: 'SM' },
-  timber_camp: { fill: '#15803d', badge: 'TC' },
-  mine: { fill: '#64748b', badge: 'MN' },
-  quarry: { fill: '#94a3b8', badge: 'Q' },
-  clay_pit: { fill: '#b45309', badge: 'CP' },
-  well: { fill: '#0284c7', badge: 'WL' },
-  farm: { fill: '#84cc16', badge: 'FM' },
-  crop_field: { fill: '#65a30d', badge: 'CF' },
-  animal_pen: { fill: '#ca8a04', badge: 'AP' },
-  orchard: { fill: '#22c55e', badge: 'OR' },
-  granary: { fill: '#eab308', badge: 'GR' },
-  market: { fill: '#8b5cf6', badge: 'MK' },
-  expedition_outpost: { fill: '#06b6d4', badge: 'EX' },
-};
 
 const TEAM_MARKER_COLORS = {
   gatherer: '#38bdf8', // Blue
@@ -78,6 +62,7 @@ function getInitialViewport(gridSize, territoryFog, showFog) {
  * @param {boolean} [props.showFog=true]
  * @param {boolean} [props.coordsOnlyTooltip=false]
  * @param {Array<object>} [props.buildings=[]]
+ * @param {{ tier?: number, level?: number } | null} [props.wall=null]
  * @param {Array<object>} [props.activeTasks=[]]
  * @param {{ x: number, y: number } | null} [props.selectedTileCoords=null]
  * @param {(tile: object | null) => void} props.onHoverSubTile
@@ -95,6 +80,7 @@ export default function TerritoryCanvas({
   showFog = true,
   coordsOnlyTooltip = false,
   buildings = [],
+  wall = null,
   activeTasks = [],
   selectedTileCoords = null,
   onHoverSubTile,
@@ -106,8 +92,14 @@ export default function TerritoryCanvas({
   const dragRef = useRef({ active: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
 
   const minTileSize = CANVAS_SIZE / territory.size;
+  const centerCoord = Math.floor(territory.size / 2);
   const [manualViewport, setManualViewport] = useState(null);
   const [hoveredTile, setHoveredTile] = useState(null);
+
+  const cityBounds = useMemo(
+    () => getCityZoneBounds({ buildings, centerX: centerCoord, centerY: centerCoord }),
+    [buildings, centerCoord],
+  );
 
   const exploredBounds = useMemo(
     () => (showFog && territoryFog ? getExploredBounds(territoryFog, territory.size) : null),
@@ -216,8 +208,16 @@ export default function TerritoryCanvas({
           }
         }
 
-        if (!coordsOnlyTooltip && subTile.inSettlementZone) {
-          ctx.fillStyle = 'rgba(251, 191, 36, 0.16)';
+        const inCityZone =
+          cityBounds.size > 0 &&
+          x >= cityBounds.minX &&
+          x <= cityBounds.maxX &&
+          y >= cityBounds.minY &&
+          y <= cityBounds.maxY;
+        const hasWatchtowerAura = getWatchtowerTileDefense(buildings, x, y) > 0;
+
+        if (inCityZone || hasWatchtowerAura) {
+          ctx.fillStyle = 'rgba(251, 191, 36, 0.18)';
           ctx.fillRect(dx, dy, w, h);
         }
 
@@ -240,6 +240,17 @@ export default function TerritoryCanvas({
             const label = building.status === 'constructing' ? 'BLD' : meta.badge;
             ctx.fillText(label, dx + w / 2, dy + h / 2);
           }
+        }
+
+        // Outline outer City perimeter when City Wall is built (colored by Wall Tier)
+        if (inCityZone && wall && (wall.level ?? 0) > 0 && cityBounds.size > 0) {
+          const borderThickness = Math.max(2, Math.floor(Math.min(w, h) * 0.12));
+          const wallTier = wall.tier ?? 1;
+          ctx.fillStyle = wallTier >= 3 ? '#f59e0b' : wallTier === 2 ? '#e2e8f0' : '#b45309';
+          if (y === cityBounds.minY) ctx.fillRect(dx, dy, w, borderThickness);
+          if (y === cityBounds.maxY) ctx.fillRect(dx, dy + h - borderThickness, w, borderThickness);
+          if (x === cityBounds.minX) ctx.fillRect(dx, dy, borderThickness, h);
+          if (x === cityBounds.maxX) ctx.fillRect(dx + w - borderThickness, dy, borderThickness, h);
         }
 
         // Highlight tiles with active dispatched teams (blue=gatherer, red=hunter, orange=mix)
@@ -269,6 +280,9 @@ export default function TerritoryCanvas({
     territoryFog,
     showFog,
     coordsOnlyTooltip,
+    buildings,
+    wall,
+    cityBounds,
     buildingByCoord,
     activeTasks,
     selectedTileCoords,
@@ -464,7 +478,15 @@ export default function TerritoryCanvas({
               ({hoveredTile.x}, {hoveredTile.y})
               {!coordsOnlyTooltip && !hoveredShrouded && (
                 <>
-                  {hoveredTile.inSettlementZone && ' · Settlement (7×7)'}
+                  {isTileInCityZone({
+                    x: hoveredTile.x,
+                    y: hoveredTile.y,
+                    buildings,
+                    centerX: centerCoord,
+                    centerY: centerCoord,
+                  }) && ` · City (${cityBounds.size}×${cityBounds.size})`}
+                  {getWatchtowerTileDefense(buildings, hoveredTile.x, hoveredTile.y) > 0 &&
+                    ' · Watchtower (3×3)'}
                   {hoveredTile.isWater ? ` · Water (${hoveredTile.waterType})` : ''}
                   {viewMode === 'dev' &&
                     ` · E:${hoveredTile.elevation.toFixed(2)} T:${normalizedTempToCelsius(hoveredTile.temperature)}°C For:${hoveredTile.forestDensity.toFixed(2)}`}

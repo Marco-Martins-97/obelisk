@@ -217,6 +217,7 @@ function PlayableVillageWorkspace({
               showFog={isOnline || showFog}
               coordsOnlyTooltip={isOnline}
               buildings={village.state.buildings}
+              wall={village.state.wall}
               activeTasks={village.state.tasks.filter((t) => typeof t.x === 'number')}
               selectedTileCoords={tileMenu ? { x: tileMenu.x, y: tileMenu.y } : null}
               onHoverSubTile={onHoverSubTile}
@@ -316,6 +317,7 @@ function PlayableVillageWorkspace({
         onStartResearch={village.startResearchTech}
         onRepairBuilding={village.repairBuilding}
         onRepairAllBuildings={village.repairAllBuildings}
+        onCancelTask={village.cancelTask}
         onDemolishBuilding={(instanceId) => {
           setSelectedBuildingId(null);
           village.demolishBuilding(instanceId);

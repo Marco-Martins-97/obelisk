@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILDING_LIST,
   BUILDINGS,
+  CITY_SIZE_BY_MAIN_TIER,
   CROPS,
   DAYS_PER_MONTH,
   DAYS_PER_SEASON,
@@ -20,6 +21,7 @@ import {
   STARTER_UNLOCKED_TECHS,
   STARTER_VILLAGE_POOLS,
   STARVATION_DEBUFF_STAGES,
+  TASK_CANCEL_WINDOW_RATIO,
   TECHNOLOGIES,
   TERRITORY_TILE_DISTANCE_KM,
   UNITS,
@@ -52,6 +54,7 @@ import {
   calculateUnitActionTimestamps,
   calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
+  canCancelTask,
   canDemolishBuilding,
   classifyOreDensitySample,
   classifyTerritoryTile,
@@ -73,6 +76,7 @@ import {
   getBuildingTierUpgradeRule,
   getBuildingUpgradePreview,
   getCalendarState,
+  getCityZoneBounds,
   getEffectiveTileProtection,
   getExploredBounds,
   getMainTierChangeRule,
@@ -85,6 +89,7 @@ import {
   getWatchtowerTileDefense,
   groupBuildingRecipesByOutput,
   isTechTriggerSatisfied,
+  isTileInCityZone,
   normalizedTempToCelsius,
   pickStarterSpawnTile,
   plantCropPlot,
@@ -641,9 +646,9 @@ describe('7x7 starter fog, 3x3 border expansion & Continent ring unlock', () => 
   });
 
   it('picks a deterministic buildable starter tile in the 30%..70% central N-S band and computes explored bounds', () => {
-    expect(UNITS.gatherer.trainingTimeHours).toBe(0);
-    expect(UNITS.hunter.trainingTimeHours).toBe(0);
-    expect(UNITS.builder.trainingTimeHours).toBe(0);
+    expect(UNITS.gatherer.trainingTimeHours).toBe(0.05);
+    expect(UNITS.hunter.trainingTimeHours).toBe(0.05);
+    expect(UNITS.builder.trainingTimeHours).toBe(0.05);
 
     const continent = generateContinent('spawn-test-seed', { size: 40 });
     const spawnA = pickStarterSpawnTile(continent, 'spawn-test-seed');
@@ -1350,5 +1355,88 @@ describe('Stage 4 Copper Age: Smithy tools, fractional Tier scaling, auto-produc
     expect(tradePlan.caravansNeeded).toBe(2);
     expect(tradePlan.arrivesAtMs).toBeGreaterThan(1000);
     expect(tradePlan.returnsAtMs).toBeGreaterThan(tradePlan.arrivesAtMs);
+  });
+
+  it('drops grain + straw on harvest, reserves pop during timed unit recruitment, and enforces 10% cancel window', () => {
+    const readyGrainPlot = {
+      ...createEmptyCropPlot(),
+      cropId: 'grain',
+      status: 'ready',
+      survivingSlots: 12,
+      nutrients: { N: 100, P: 100, K: 100 },
+    };
+    const harvest = resolveCropHarvest({ plot: readyGrainPlot, unlockedTechs: [] });
+    expect(harvest.itemId).toBe('grain');
+    expect(harvest.secondaryItemId).toBe('straw');
+    expect(harvest.harvestedQty).toBeGreaterThan(0);
+    expect(harvest.secondaryQty).toBe(Math.max(1, Math.round(harvest.harvestedQty * 0.6)));
+    expect(harvest.items).toEqual({
+      grain: harvest.harvestedQty,
+      straw: harvest.secondaryQty,
+    });
+
+    expect(UNITS.gatherer.trainingTimeHours).toBe(0.05);
+    expect(UNITS.hunter.trainingTimeHours).toBe(0.05);
+    expect(UNITS.builder.trainingTimeHours).toBe(0.05);
+    expect(UNITS.transport_ship.trainingTimeHours).toBeGreaterThan(UNITS.spearman.trainingTimeHours);
+
+    expect(
+      calculatePopUsed({
+        units: { gatherer: 1 },
+        buildings: [{ buildingId: 'main', status: 'active' }],
+        tasks: [
+          { kind: 'train_unit', unitId: 'hunter', quantity: 1, resolvedTrain: false },
+          { kind: 'train_unit', unitId: 'cavalry', quantity: 1, resolvedTrain: true },
+        ],
+      }),
+    ).toBe(2);
+
+    expect(TASK_CANCEL_WINDOW_RATIO).toBe(0.1);
+    const craftTask = { startedAtMs: 1000, completedAtMs: 11000 };
+    expect(canCancelTask(craftTask, 1000)).toEqual({ allowed: true, remainingCancelVirtualMs: 1000 });
+    expect(canCancelTask(craftTask, 2000)).toEqual({ allowed: true, remainingCancelVirtualMs: 0 });
+    expect(canCancelTask(craftTask, 2001)).toEqual({ allowed: false, remainingCancelVirtualMs: 0 });
+
+    const expeditionTask = { startedAtMs: 0, completedAtMs: 4000, returnsAtMs: 10000 };
+    expect(canCancelTask(expeditionTask, 1000).allowed).toBe(true);
+    expect(canCancelTask(expeditionTask, 1001).allowed).toBe(false);
+  });
+
+  it('scales dynamic City footprint by Main Tier and scopes City Wall protection to active city tiles', () => {
+    expect(CITY_SIZE_BY_MAIN_TIER).toEqual({ 1: 0, 2: 1, 3: 3, 4: 5, 5: 7 });
+
+    expect(isTileInCityZone({ x: 12, y: 12, mainTier: 1 })).toBe(false);
+    expect(getCityZoneBounds({ mainTier: 1 }).size).toBe(0);
+
+    expect(getCityZoneBounds({ mainTier: 2 }).size).toBe(1);
+    expect(isTileInCityZone({ x: 12, y: 12, mainTier: 2 })).toBe(true);
+    expect(isTileInCityZone({ x: 11, y: 12, mainTier: 2 })).toBe(false);
+
+    expect(getCityZoneBounds({ mainTier: 3 })).toMatchObject({
+      size: 3,
+      minX: 11,
+      maxX: 13,
+      minY: 11,
+      maxY: 13,
+    });
+    expect(isTileInCityZone({ x: 11, y: 13, mainTier: 3 })).toBe(true);
+    expect(isTileInCityZone({ x: 10, y: 12, mainTier: 3 })).toBe(false);
+
+    const bronzeVillage = [{ instanceId: 'm0', buildingId: 'main', x: 12, y: 12, tier: 3, level: 1, status: 'active' }];
+    const insideProt = getEffectiveTileProtection({
+      buildings: bronzeVillage,
+      wall: { tier: 3, level: 1 },
+      x: 11,
+      y: 11,
+    });
+    const outsideProt = getEffectiveTileProtection({
+      buildings: bronzeVillage,
+      wall: { tier: 3, level: 1 },
+      x: 15,
+      y: 15,
+    });
+    expect(insideProt.wallDefense).toBe(45);
+    expect(outsideProt.wallDefense).toBe(0);
+    expect(outsideProt.defensePercent).toBe(0);
   });
 });

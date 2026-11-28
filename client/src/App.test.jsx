@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { MemoryRouter } from 'react-router';
-import { REAL_MS_PER_INGAME_HOUR } from '@obelisk/shared';
+import { BUILDINGS, REAL_MS_PER_INGAME_HOUR } from '@obelisk/shared';
 import BuildingModal from './components/BuildingModal.jsx';
 import { AppRoutes } from './App.jsx';
+import { BUILDING_COLORS } from './utils/mapColors.js';
 import {
   formatRealConclusionTimeHMS,
   formatRealDurationHMS,
   formatRealHoursHMS,
+  getCapacityHighColorClass,
+  getReserveLowColorClass,
+  getUnitAvailabilityColorClass,
 } from './utils/timeFormat.js';
 
 describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action Menu', () => {
@@ -51,6 +55,7 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
     vi.restoreAllMocks();
   });
@@ -153,6 +158,8 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
   });
 
   it('supports Sandbox 3600x speed, discarding X resources, [Gather - 1 +]/[Hunt - 1 +]/[Team >], Build colors, and real-time timers', () => {
+    vi.useFakeTimers();
+
     // 12 in-game mins = 2 real mins at 6x; 10:00:00 + 2m15s -> Conclusion 10:02:15.
     const twelveInGameMinsMs = (12 / 60) * REAL_MS_PER_INGAME_HOUR;
     expect(formatRealDurationHMS(twelveInGameMinsMs, 6)).toBe('00:02:00');
@@ -206,6 +213,11 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
     fireEvent.click(trainButtons[1]); // Hunter #1 (1 Stick)
     fireEvent.click(trainButtons[2]); // Builder #1
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    // Complete 0.05h Stone Age recruitment at 3600x speed (0.3s real time).
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
 
     // Right-clicking placed Main building (12, 12) opens the Building Quick Action Menu.
     fireEvent.contextMenu(territoryCanvas, { clientX: 336, clientY: 336 });
@@ -521,22 +533,30 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
   });
 
   it('dispenses idle units in live Sandbox HUD and decrements population usage', () => {
+    vi.useFakeTimers();
+
     render(
       <MemoryRouter initialEntries={['/sandbox']}>
         <AppRoutes />
       </MemoryRouter>,
     );
 
+    fireEvent.change(screen.getByLabelText('Game Speed'), { target: { value: '3600' } });
+
     const territoryCanvas = screen.getByLabelText('Territory Map Canvas');
     fireEvent.mouseDown(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
     fireEvent.mouseUp(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
 
     const trainButtons = screen.getAllByRole('button', { name: 'Train +1' });
-    fireEvent.click(trainButtons[0]); // Gatherer -> 1/10 pop
+    fireEvent.click(trainButtons[0]); // Gatherer -> 1/10 pop reserved while recruiting
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.getByText('1/10')).toBeInTheDocument();
 
-    // Dispense directly from the top-right Units HUD card.
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Dispense directly from the top-right Units HUD card once recruitment finishes.
     fireEvent.click(screen.getByRole('button', { name: 'Dispense 1 Gatherer' }));
     expect(screen.getByText('0/10')).toBeInTheDocument();
   });
@@ -671,5 +691,97 @@ describe('Stage 3B: Continent Full Page Toggle, Top-Right Sidebar & Team Action 
       requestId: 'tin_ore',
       requestQty: 10,
     });
+  });
+
+  it('applies threshold & unit availability colors and enforces 10% task cancellation window', () => {
+    expect(getUnitAvailabilityColorClass(0, 0)).toBe('text-slate-500');
+    expect(getUnitAvailabilityColorClass(0, 2)).toBe('text-rose-400');
+    expect(getUnitAvailabilityColorClass(1, 2)).toBe('text-amber-300');
+    expect(getUnitAvailabilityColorClass(2, 2)).toBe('text-emerald-400');
+
+    expect(getCapacityHighColorClass(90, 100, 'text-amber-300')).toBe('text-amber-300');
+    expect(getCapacityHighColorClass(91, 100, 'text-amber-300')).toBe('text-orange-400');
+    expect(getCapacityHighColorClass(100, 100, 'text-amber-300')).toBe('text-rose-400');
+
+    expect(getReserveLowColorClass(10, 100, 'text-emerald-300')).toBe('text-emerald-300');
+    expect(getReserveLowColorClass(9, 100, 'text-emerald-300')).toBe('text-orange-400');
+    expect(getReserveLowColorClass(0, 100, 'text-emerald-300')).toBe('text-rose-400');
+
+    vi.useFakeTimers();
+
+    render(
+      <MemoryRouter initialEntries={['/sandbox']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText('Game Speed'), { target: { value: '60' } });
+
+    expect(screen.getAllByText('0/0')[0]).toHaveClass('text-slate-500');
+    const statusHeader = screen.getByLabelText('Village status header');
+    const foodValue = Array.from(statusHeader.querySelectorAll('strong')).find(
+      (node) => node.textContent === '5',
+    );
+    expect(foodValue).toHaveClass('text-orange-400');
+
+    const territoryCanvas = screen.getByLabelText('Territory Map Canvas');
+    fireEvent.mouseDown(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
+    fireEvent.mouseUp(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
+
+    // Train Hunter (costs 1 Stick: 10 -> 9) -> queued, reserves 1/10 pop, cancellable at t=0 with full refund.
+    const trainButtons = screen.getAllByRole('button', { name: 'Train +1' });
+    fireEvent.click(trainButtons[1]);
+    expect(screen.getByText('9/1 Sticks')).toBeInTheDocument();
+    expect(screen.getByText('1/10')).toBeInTheDocument();
+    expect(screen.getAllByText('Recruit Hunter').length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]);
+    expect(screen.queryByText('Recruit Hunter')).not.toBeInTheDocument();
+    expect(screen.getByText('10/1 Sticks')).toBeInTheDocument();
+    expect(screen.getByText('0/10')).toBeInTheDocument();
+
+    // Queue Gatherer (30,000ms virtual = 3.0s at 60x), advance 500ms (16.7% > 10% window) -> Cancel hides while task stays active.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Train +1' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByText('Recruit Gatherer')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByText('Recruit Gatherer')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(screen.getByText('1/1')).toHaveClass('text-emerald-400');
+  });
+
+  it('keeps unit names white while coloring counters and maps every placeable building badge', () => {
+    for (const def of Object.values(BUILDINGS)) {
+      if (!def.buildable && !def.prePlaced) continue;
+      expect(BUILDING_COLORS[def.id]).toBeDefined();
+      expect(BUILDING_COLORS[def.id].badge).not.toBe('B');
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/sandbox']}>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Gatherer')).toHaveClass('text-white');
+    expect(screen.getAllByText('0/0')[0]).toHaveClass('text-slate-500');
+
+    const territoryCanvas = screen.getByLabelText('Territory Map Canvas');
+    fireEvent.mouseDown(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
+    fireEvent.mouseUp(territoryCanvas, { button: 0, clientX: 336, clientY: 336 });
+
+    const gathererRowLabel = screen.getByText((_, node) =>
+      node.tagName === 'SPAN' && node.className.includes('text-white') && node.textContent.startsWith('Gatherer ('),
+    );
+    expect(gathererRowLabel).toHaveClass('text-white');
+    expect(gathererRowLabel.querySelector('span')).toHaveClass('text-slate-500');
   });
 });

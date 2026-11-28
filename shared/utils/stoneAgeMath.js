@@ -777,15 +777,16 @@ export function calculateMaxPopulation(buildings) {
 }
 
 /**
- * Calculates active used population across trained units and building workers.
+ * Calculates active used population across trained units, building workers, and in-progress recruits.
  * Daily survival scales with `popUsed`, not unused `popCapacity`.
  *
  * @param {object} params - Village population inputs.
  * @param {Record<string, number>} [params.units={}] - Unit counts keyed by unitId.
  * @param {Array<{ buildingId: string, status?: string }>} [params.buildings=[]] - Village buildings.
+ * @param {Array<object>} [params.tasks=[]] - Active tasks reserving population (unit recruitment queues).
  * @returns {number} Total `popUsed`.
  */
-export function calculatePopUsed({ units = {}, buildings = [] } = {}) {
+export function calculatePopUsed({ units = {}, buildings = [], tasks = [] } = {}) {
   let total = 0;
 
   for (const [unitId, count] of Object.entries(units)) {
@@ -802,6 +803,15 @@ export function calculatePopUsed({ units = {}, buildings = [] } = {}) {
     const def = BUILDINGS[instance.buildingId];
     if (!def) continue;
     total += def.workersRequired;
+  }
+
+  for (const task of tasks ?? []) {
+    if (task?.kind === 'train_unit' && !task.resolvedTrain) {
+      const def = UNITS[task.unitId];
+      if (def) {
+        total += Math.max(1, task.quantity ?? 1) * def.popCost;
+      }
+    }
   }
 
   return total;
@@ -1355,6 +1365,35 @@ export function getTaskPhase(task, nowMs) {
     phaseLabel: 'Done',
     phaseRemainingMs: 0,
     totalRemainingMs: 0,
+  };
+}
+
+/** Fraction of total task duration during which a player may cancel cleanly (first 10%). */
+export const TASK_CANCEL_WINDOW_RATIO = 0.1;
+
+/**
+ * Checks whether an active task can still be cancelled cleanly within the first 10%
+ * of its total virtual execution window (`startedAtMs` -> `returnsAtMs ?? completedAtMs`).
+ *
+ * @param {object} task - Pending task descriptor.
+ * @param {number} [nowMs=0] - Current virtual simulation timestamp.
+ * @returns {{ allowed: boolean, remainingCancelVirtualMs: number }} Cancellation eligibility & window left.
+ */
+export function canCancelTask(task, nowMs = 0) {
+  const startMs = task?.startedAtMs;
+  const endMs = task?.returnsAtMs ?? task?.completedAtMs;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return { allowed: false, remainingCancelVirtualMs: 0 };
+  }
+
+  const totalMs = endMs - startMs;
+  const windowMs = totalMs * TASK_CANCEL_WINDOW_RATIO;
+  const elapsedMs = nowMs - startMs;
+  const allowed = elapsedMs >= 0 && elapsedMs <= windowMs;
+
+  return {
+    allowed,
+    remainingCancelVirtualMs: allowed ? Math.max(0, windowMs - elapsedMs) : 0,
   };
 }
 

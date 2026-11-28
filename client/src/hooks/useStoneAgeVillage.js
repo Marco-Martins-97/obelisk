@@ -40,6 +40,7 @@ import {
   calculateUnitActionTimestamps,
   calculateWaterCapacity,
   canBuildOrUpgradeBuilding,
+  canCancelTask,
   canDemolishBuilding,
   consumeStoredFoodFEFO,
   createEmptyCropPlot,
@@ -496,7 +497,19 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
       newLogs.push(`Researched ${TECHNOLOGIES[task.techId].name}!`);
     }
 
-    if (task.kind === 'craft' && !task.resolvedCraft && nextVirtualTimeMs >= task.completedAtMs) {
+    if (
+      task.kind === 'train_unit' &&
+      !task.resolvedTrain &&
+      nextVirtualTimeMs >= task.completedAtMs
+    ) {
+      task.resolvedTrain = true;
+      const qty = Math.max(1, Math.floor(task.quantity ?? 1));
+      units[task.unitId] = (units[task.unitId] ?? 0) + qty;
+      newLogs.push(`Recruited ${qty} ${UNITS[task.unitId]?.name ?? task.unitId}!`);
+    }
+
+    if (
+      task.kind === 'craft' && !task.resolvedCraft && nextVirtualTimeMs >= task.completedAtMs) {
       task.resolvedCraft = true;
       const recipe = RECIPES[task.recipeId];
       const craftOutputs = task.outputs ?? recipe.outputs;
@@ -741,7 +754,7 @@ function advanceVillageSimulation(prev, nextVirtualTimeMs, territory, spawnTile,
       }
 
       const buildingMaxPop = calculateMaxPopulation(buildings);
-      const popUsed = calculatePopUsed({ units, buildings });
+      const popUsed = calculatePopUsed({ units, buildings, tasks: nextTasks });
 
       let hasDeficit = false;
       let foodDeficit = 0;
@@ -1188,7 +1201,7 @@ export function useStoneAgeVillage({
   const maxPop = state.isAbandoned
     ? 0
     : Math.max(0, buildingMaxPop - (state.starvationPopLoss ?? 0));
-  const popUsed = calculatePopUsed({ units: state.units, buildings: state.buildings });
+  const popUsed = calculatePopUsed({ units: state.units, buildings: state.buildings, tasks: state.tasks });
   const starvationStage = getStarvationStageInfo({
     starvationDays: state.starvationDays ?? 0,
     efficiencyPenalty: state.efficiencyPenalty ?? 0,
@@ -1230,7 +1243,7 @@ export function useStoneAgeVillage({
   }, [worldParams]);
 
   const trainUnit = useCallback(
-    (unitId) => {
+    (unitId, buildingInstanceId = null) => {
       updateSessionState((prev) => {
         if (prev.isAbandoned) return prev;
         const unitDef = UNITS[unitId];
@@ -1247,7 +1260,11 @@ export function useStoneAgeVillage({
           0,
           calculateMaxPopulation(prev.buildings) - (prev.starvationPopLoss ?? 0),
         );
-        const curPopUsed = calculatePopUsed({ units: prev.units, buildings: prev.buildings });
+        const curPopUsed = calculatePopUsed({
+          units: prev.units,
+          buildings: prev.buildings,
+          tasks: prev.tasks,
+        });
         if (curPopUsed + unitDef.popCost > curMaxPop) return prev;
 
         const nextTiers = { ...(prev.unitTiers ?? DEFAULT_UNIT_TIERS) };
@@ -1267,16 +1284,51 @@ export function useStoneAgeVillage({
           nextAnimals[aId] = Math.max(0, (nextAnimals[aId] ?? 0) - qty);
         }
 
+        const trainHours = unitDef.trainingTimeHours ?? 0;
+        if (trainHours <= 0) {
+          return {
+            ...prev,
+            inventory: spendResources(prev.inventory, unitCost),
+            animals: nextAnimals,
+            unitTiers: nextTiers,
+            units: {
+              ...prev.units,
+              [unitId]: (prev.units[unitId] ?? 0) + 1,
+            },
+            logs: [`Trained 1 ${unitDef.name} (${curPopUsed + unitDef.popCost}/${curMaxPop} pop).`, ...prev.logs].slice(0, 24),
+          };
+        }
+
+        const targetBld =
+          (buildingInstanceId &&
+            prev.buildings.find((b) => b.instanceId === buildingInstanceId && b.status === 'active')) ||
+          prev.buildings.find((b) => b.buildingId === unitDef.trainedAt && b.status === 'active') ||
+          main;
+        const effMult = Math.max(0.2, 1 - (prev.efficiencyPenalty ?? 0));
+        const trainMs = Math.round((trainHours / effMult) * REAL_MS_PER_INGAME_HOUR);
+
         return {
           ...prev,
+          nextSeq: prev.nextSeq + 1,
           inventory: spendResources(prev.inventory, unitCost),
           animals: nextAnimals,
           unitTiers: nextTiers,
-          units: {
-            ...prev.units,
-            [unitId]: (prev.units[unitId] ?? 0) + 1,
-          },
-          logs: [`Trained 1 ${unitDef.name} (${curPopUsed + unitDef.popCost}/${curMaxPop} pop).`, ...prev.logs].slice(0, 24),
+          tasks: [
+            ...prev.tasks,
+            {
+              id: `trn-${prev.nextSeq}`,
+              kind: 'train_unit',
+              unitId,
+              buildingInstanceId: targetBld?.instanceId ?? null,
+              quantity: 1,
+              cost: { ...unitCost },
+              animalsSpent: { ...(unitDef.requiredAnimal ?? {}) },
+              startedAtMs: prev.virtualTimeMs,
+              completedAtMs: prev.virtualTimeMs + trainMs,
+              resolvedTrain: false,
+            },
+          ],
+          logs: [`Recruiting 1 ${unitDef.name} (${curPopUsed + unitDef.popCost}/${curMaxPop} pop).`, ...prev.logs].slice(0, 24),
         };
       });
     },
@@ -1639,7 +1691,11 @@ export function useStoneAgeVillage({
           0,
           calculateMaxPopulation(prev.buildings) - (prev.starvationPopLoss ?? 0),
         );
-        const curPopUsed = calculatePopUsed({ units: prev.units, buildings: prev.buildings });
+        const curPopUsed = calculatePopUsed({
+          units: prev.units,
+          buildings: prev.buildings,
+          tasks: prev.tasks,
+        });
         if (curPopUsed + def.workersRequired > curMaxPop) return prev;
         if (!hasEnoughResources(prev.inventory, def.cost)) return prev;
 
@@ -1676,6 +1732,7 @@ export function useStoneAgeVillage({
           targetTier: perm.spawnTier,
           targetLevel: 1,
           buildersUsed: def.buildersRequired,
+          cost: { ...def.cost },
           startedAtMs: prev.virtualTimeMs,
           arrivesAtMs: timing.arrivesAtMs,
           completedAtMs: timing.completedAtMs,
@@ -1755,6 +1812,7 @@ export function useStoneAgeVillage({
           y: target.y,
           targetLevel: nextLevel,
           buildersUsed: buildersNeeded,
+          cost: upgradeCost,
           startedAtMs: prev.virtualTimeMs,
           arrivesAtMs: timing.arrivesAtMs,
           completedAtMs: timing.completedAtMs,
@@ -1833,6 +1891,7 @@ export function useStoneAgeVillage({
               instanceId: main.instanceId,
               targetTier,
               buildersUsed: rule.buildersRequired,
+              cost: { ...rule.cost },
               startedAtMs: prev.virtualTimeMs,
               arrivesAtMs: prev.virtualTimeMs,
               completedAtMs,
@@ -1887,6 +1946,8 @@ export function useStoneAgeVillage({
               buildingInstanceId,
               recipeId,
               quantity: batchQty,
+              cost: scaledInputs,
+              waterSpent: waterCost,
               outputs: scaledOutputs,
               startedAtMs: prev.virtualTimeMs,
               completedAtMs,
@@ -1934,6 +1995,7 @@ export function useStoneAgeVillage({
               kind: 'research',
               buildingInstanceId,
               techId,
+              cost: { ...tech.cost },
               startedAtMs: prev.virtualTimeMs,
               completedAtMs,
               resolvedResearch: false,
@@ -1999,6 +2061,7 @@ export function useStoneAgeVillage({
               y: target.y,
               targetTier: rule.targetTier,
               buildersUsed: rule.buildersRequired,
+              cost: { ...rule.cost },
               startedAtMs: prev.virtualTimeMs,
               arrivesAtMs: timing.arrivesAtMs,
               completedAtMs,
@@ -2064,6 +2127,7 @@ export function useStoneAgeVillage({
             targetTier,
             targetLevel,
             buildersUsed: 1,
+            cost,
             startedAtMs: prev.virtualTimeMs,
             arrivesAtMs: prev.virtualTimeMs,
             completedAtMs,
@@ -2167,6 +2231,8 @@ export function useStoneAgeVillage({
               units: { ...reqUnits },
               toX,
               toY,
+              waterSpent: plan.waterNeeded,
+              foodSpent: plan.foodNeeded,
               startedAtMs: prev.virtualTimeMs,
               arrivesAtMs: plan.arrivesAtMs,
               completedAtMs: plan.completedAtMs,
@@ -2258,10 +2324,19 @@ export function useStoneAgeVillage({
         const key = `${x},${y}`;
         const detail = prev.tileDetails?.[key] ?? {};
         const res = resolveCropHarvest({ plot: detail.cropPlot, unlockedTechs: prev.unlockedTechs });
-        if (!res.itemId || res.harvestedQty <= 0) return prev;
+        const harvestItems =
+          res.items && Object.keys(res.items).length > 0
+            ? res.items
+            : res.itemId && res.harvestedQty > 0
+              ? { [res.itemId]: res.harvestedQty }
+              : {};
+        if (Object.keys(harvestItems).length === 0) return prev;
 
         const maxStorage = calculateStorageCapacity(prev.buildings, prev.inventory).totalCapacity;
-        const added = addItemsWithinCapacity(prev.inventory, { [res.itemId]: res.harvestedQty }, maxStorage);
+        const added = addItemsWithinCapacity(prev.inventory, harvestItems, maxStorage);
+        const yieldSummary = Object.entries(harvestItems)
+          .map(([id, q]) => `+${q} ${RESOURCES[id]?.name ?? id}`)
+          .join(', ');
 
         return {
           ...prev,
@@ -2270,7 +2345,60 @@ export function useStoneAgeVillage({
             ...(prev.tileDetails ?? {}),
             [key]: { ...detail, cropPlot: res.plot },
           },
-          logs: [`Harvested +${res.harvestedQty} ${RESOURCES[res.itemId]?.name ?? res.itemId} from (${x}, ${y}).`, ...prev.logs].slice(0, 24),
+          logs: [`Harvested ${yieldSummary} from (${x}, ${y}).`, ...prev.logs].slice(0, 24),
+        };
+      });
+    },
+    [updateSessionState],
+  );
+
+  const cancelTask = useCallback(
+    (taskId) => {
+      updateSessionState((prev) => {
+        if (prev.isAbandoned) return prev;
+        const task = prev.tasks.find((t) => t.id === taskId);
+        if (!task || !canCancelTask(task, prev.virtualTimeMs).allowed) return prev;
+
+        const nextBuildings =
+          task.kind === 'build'
+            ? prev.buildings.filter((b) => b.instanceId !== task.instanceId)
+            : prev.buildings;
+
+        const nextWall =
+          task.kind === 'upgrade_wall'
+            ? { ...(prev.wall ?? {}), status: (prev.wall?.level ?? 0) > 0 ? 'active' : 'none' }
+            : prev.wall;
+
+        const maxStorage = calculateStorageCapacity(nextBuildings, prev.inventory).totalCapacity;
+        const refundedInv =
+          task.cost && Object.keys(task.cost).length > 0
+            ? addItemsWithinCapacity(prev.inventory, task.cost, maxStorage).inventory
+            : prev.inventory;
+
+        const nextAnimals = { ...(prev.animals ?? {}) };
+        for (const [aId, qty] of Object.entries(task.animalsSpent ?? {})) {
+          nextAnimals[aId] = (nextAnimals[aId] ?? 0) + qty;
+        }
+
+        const nextWaterCap = calculateWaterCapacity(nextBuildings, refundedInv);
+        const nextWater =
+          task.waterSpent > 0
+            ? Math.min(nextWaterCap, (prev.water ?? 0) + task.waterSpent)
+            : prev.water;
+
+        const nextFoodCarry =
+          task.foodSpent > 0 ? (prev.foodCarry ?? 0) + task.foodSpent : (prev.foodCarry ?? 0);
+
+        return {
+          ...prev,
+          buildings: nextBuildings,
+          wall: nextWall,
+          inventory: refundedInv,
+          animals: nextAnimals,
+          water: nextWater,
+          foodCarry: nextFoodCarry,
+          tasks: prev.tasks.filter((t) => t.id !== taskId),
+          logs: [`Cancelled ${task.kind.replace('_', ' ')} (resources refunded).`, ...prev.logs].slice(0, 24),
         };
       });
     },
@@ -2794,6 +2922,7 @@ export function useStoneAgeVillage({
     trainUnit,
     refitUnitTier,
     dismissUnit,
+    cancelTask,
     removeResource,
     dispatchTileAction,
     prospectTile,

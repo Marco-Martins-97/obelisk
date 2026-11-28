@@ -6,10 +6,17 @@ import {
   RESOURCES,
   TECHNOLOGIES,
   UNITS,
+  canCancelTask,
   getTaskPhase,
   getVillageDailyProductionSummary,
 } from '@obelisk/shared';
-import { formatRealConclusionTimeHMS, formatRealDurationHMS } from '../utils/timeFormat.js';
+import {
+  formatRealConclusionTimeHMS,
+  formatRealDurationHMS,
+  getCapacityHighColorClass,
+  getReserveLowColorClass,
+  getUnitAvailabilityColorClass,
+} from '../utils/timeFormat.js';
 
 const PHASE_BADGE_STYLES = {
   going: 'bg-sky-500/20 text-sky-300',
@@ -207,22 +214,25 @@ export function VillageHeaderBar({
         <div className="flex flex-wrap items-center gap-3 font-mono text-[11px]">
           <span className="text-slate-200">
             Storage:{' '}
-            <strong className="text-amber-300">
+            <strong className={getCapacityHighColorClass(storageUsed, storageCapacity, 'text-amber-300')}>
               {storageUsed}/{storageCapacity}
             </strong>
           </span>
           <span className="text-slate-200">
-            Food: <strong className="text-emerald-300">{formattedFood}</strong>
+            Food:{' '}
+            <strong className={getReserveLowColorClass(storedFood, storageCapacity, 'text-emerald-300')}>
+              {formattedFood}
+            </strong>
           </span>
           <span className="text-slate-200">
             Water:{' '}
-            <strong className="text-sky-300">
+            <strong className={getReserveLowColorClass(state.water, waterCapacity, 'text-sky-300')}>
               {state.water}/{waterCapacity}
             </strong>
           </span>
           <span className="text-slate-200">
             Pop:{' '}
-            <strong className="text-purple-300">
+            <strong className={getCapacityHighColorClass(popUsed, maxPop, 'text-purple-300')}>
               {popUsed}/{maxPop}
             </strong>
           </span>
@@ -328,14 +338,15 @@ export function VillageSidebarPanels({ village, territory = null }) {
             .map((unitId) => {
             const totalCount = state.units[unitId] ?? 0;
             const freeCount = freeUnits[unitId] ?? 0;
+            const availabilityColorClass = getUnitAvailabilityColorClass(freeCount, totalCount);
             return (
               <div
                 key={unitId}
                 className="flex flex-col items-center justify-between rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5 text-center"
               >
-                <div className="text-[10px] text-slate-400">{UNITS[unitId].name}</div>
-                <div className="flex items-center justify-center gap-1.5 font-bold text-emerald-300">
-                  <span>
+                <div className="text-[10px] text-white">{UNITS[unitId].name}</div>
+                <div className="flex items-center justify-center gap-1.5 font-bold">
+                  <span className={availabilityColorClass}>
                     {freeCount}/{totalCount}
                   </span>
                   {totalCount > 0 && village.dismissUnit && (
@@ -391,12 +402,18 @@ export function VillageSidebarPanels({ village, territory = null }) {
                         .join('+') || UNITS[t.unitId]?.name
                     : '';
 
+                const trainerBuilding =
+                  t.kind === 'train_unit' && t.buildingInstanceId
+                    ? state.buildings.find((b) => b.instanceId === t.buildingInstanceId)
+                    : null;
                 const coordsLabel =
                   typeof t.x === 'number' && typeof t.y === 'number'
                     ? `(${t.x}, ${t.y})`
                     : typeof t.toX === 'number' && typeof t.toY === 'number'
                       ? `(${t.toX}, ${t.toY})`
-                      : 'Main Hall';
+                      : trainerBuilding
+                        ? BUILDINGS[trainerBuilding.buildingId]?.name ?? 'Main Hall'
+                        : 'Main Hall';
 
                 const craftBatch = t.quantity > 1 ? `${t.quantity}x ` : '';
                 const rightLabel =
@@ -416,9 +433,17 @@ export function VillageSidebarPanels({ village, territory = null }) {
                                 ? `Wall -> T${t.targetTier} L${t.targetLevel}`
                                 : t.kind === 'upgrade'
                                   ? `Upgrade ${BUILDINGS[t.buildingId].name}`
-                                  : t.kind === 'research'
-                                    ? `Research ${TECHNOLOGIES[t.techId].name}`
-                                    : `Craft ${craftBatch}${RECIPES[t.recipeId].name}`;
+                                  : t.kind === 'train_unit'
+                                    ? `Recruit ${UNITS[t.unitId]?.name ?? t.unitId}`
+                                    : t.kind === 'research'
+                                      ? `Research ${TECHNOLOGIES[t.techId].name}`
+                                      : `Craft ${craftBatch}${RECIPES[t.recipeId].name}`;
+
+                const canCancel = Boolean(
+                  !state.isAbandoned &&
+                    village.cancelTask &&
+                    canCancelTask(t, state.virtualTimeMs).allowed,
+                );
 
                 return (
                   <li
@@ -445,14 +470,25 @@ export function VillageSidebarPanels({ village, territory = null }) {
                         Conclusion:{' '}
                         {formatRealConclusionTimeHMS(phaseInfo.totalRemainingMs, activeSpeed)}
                       </span>
-                      <span
-                        className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${
-                          PHASE_BADGE_STYLES[phaseInfo.phase]
-                        }`}
-                      >
-                        {phaseInfo.phaseLabel}{' '}
-                        {formatRealDurationHMS(phaseInfo.phaseRemainingMs, activeSpeed)}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {canCancel && (
+                          <button
+                            type="button"
+                            onClick={() => village.cancelTask(t.id)}
+                            className="rounded border border-rose-700/70 bg-rose-950/70 px-1.5 py-0.5 font-semibold text-rose-200 hover:bg-rose-900/80"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        <span
+                          className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${
+                            PHASE_BADGE_STYLES[phaseInfo.phase]
+                          }`}
+                        >
+                          {phaseInfo.phaseLabel}{' '}
+                          {formatRealDurationHMS(phaseInfo.phaseRemainingMs, activeSpeed)}
+                        </span>
+                      </div>
                     </div>
                   </li>
                 );

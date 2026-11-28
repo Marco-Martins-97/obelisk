@@ -7,6 +7,7 @@ import {
   TECHNOLOGIES,
   UNITS,
   canBuildOrUpgradeBuilding,
+  canCancelTask,
   calculateBuildingRepairCost,
   calculateRepairAllCost,
   canDemolishBuilding,
@@ -21,7 +22,11 @@ import {
 } from '@obelisk/shared';
 import CopperAgeBuildingPanels from './CopperAgeBuildingPanels.jsx';
 import CostInline from './CostInline.jsx';
-import { formatRealDurationHMS, formatRealHoursHMS } from '../utils/timeFormat.js';
+import {
+  formatRealDurationHMS,
+  formatRealHoursHMS,
+  getUnitAvailabilityColorClass,
+} from '../utils/timeFormat.js';
 
 /**
  * Native `<dialog>` building inspector and management modal.
@@ -51,6 +56,7 @@ export default function BuildingModal({
   onStartResearch,
   onRepairBuilding,
   onRepairAllBuildings,
+  onCancelTask,
   onDemolishBuilding,
 }) {
   const dialogRef = useRef(null);
@@ -116,6 +122,7 @@ export default function BuildingModal({
   const refitUnitFn = onRefitUnitTier ?? village?.refitUnitTier;
   const repairFn = onRepairBuilding ?? village?.repairBuilding;
   const repairAllFn = onRepairAllBuildings ?? village?.repairAllBuildings;
+  const cancelTaskFn = onCancelTask ?? village?.cancelTask;
   const demolishFn = onDemolishBuilding ?? village?.demolishBuilding;
 
   const activeBuildTask = building
@@ -131,7 +138,7 @@ export default function BuildingModal({
   const activeCraftOrResearch = building
     ? state.tasks.filter(
         (t) =>
-          (t.kind === 'craft' || t.kind === 'research') &&
+          (t.kind === 'craft' || t.kind === 'research' || t.kind === 'train_unit') &&
           t.buildingInstanceId === building.instanceId,
       )
     : [];
@@ -300,7 +307,24 @@ export default function BuildingModal({
 
           {building.status === 'constructing' ? (
             <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs">
-              <div className="font-bold text-amber-300">Building...</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-bold text-amber-300">Building...</div>
+                {!isAbandoned &&
+                  activeBuildTask &&
+                  cancelTaskFn &&
+                  canCancelTask(activeBuildTask, state.virtualTimeMs).allowed && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        cancelTaskFn(activeBuildTask.id);
+                        handleModalClose();
+                      }}
+                      className="rounded border border-rose-700/70 bg-rose-950/70 px-2 py-0.5 text-[11px] font-semibold text-rose-200 hover:bg-rose-900/80"
+                    >
+                      Cancel
+                    </button>
+                  )}
+              </div>
               <div className="mt-1 font-mono text-slate-200">
                 Completion in:{' '}
                 {formatRealDurationHMS(
@@ -322,8 +346,21 @@ export default function BuildingModal({
                   role="status"
                   className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs"
                 >
-                  <div className="font-bold text-amber-300">
-                    Upgrading... (Building remains active)
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold text-amber-300">
+                      Upgrading... (Building remains active)
+                    </div>
+                    {!isAbandoned &&
+                      cancelTaskFn &&
+                      canCancelTask(activeBuildTask, state.virtualTimeMs).allowed && (
+                        <button
+                          type="button"
+                          onClick={() => cancelTaskFn(activeBuildTask.id)}
+                          className="rounded border border-rose-700/70 bg-rose-950/70 px-2 py-0.5 text-[11px] font-semibold text-rose-200 hover:bg-rose-900/80"
+                        >
+                          Cancel
+                        </button>
+                      )}
                   </div>
                   <div className="mt-1 font-mono text-slate-200">
                     Completion in:{' '}
@@ -455,8 +492,17 @@ export default function BuildingModal({
                             <div className="flex items-center justify-between gap-2">
                               <div>
                                 <div className="flex items-center gap-1.5 font-medium text-slate-100">
-                                  <span>
-                                    {u.name} ({freeUnits[unitId]}/{curCount} free)
+                                  <span className="text-white">
+                                    {u.name} (
+                                    <span
+                                      className={getUnitAvailabilityColorClass(
+                                        freeUnits[unitId] ?? 0,
+                                        curCount,
+                                      )}
+                                    >
+                                      {freeUnits[unitId] ?? 0}/{curCount}
+                                    </span>{' '}
+                                    free)
                                   </span>
                                   {u.upgradeTechs?.length > 0 && (
                                     <span
@@ -472,6 +518,13 @@ export default function BuildingModal({
                                 </div>
                                 <div className="text-[11px] text-slate-400">
                                   Pop: {u.popCost}
+                                  {u.trainingTimeHours > 0 && (
+                                    <>
+                                      {' · '}
+                                      Time:{' '}
+                                      {formatRealHoursHMS(u.trainingTimeHours, activeSpeed, effPenalty)}
+                                    </>
+                                  )}
                                   {u.attack > 0 && (
                                     <>
                                       {' · '}
@@ -539,7 +592,7 @@ export default function BuildingModal({
                                 <button
                                   type="button"
                                   disabled={!canTrain}
-                                  onClick={() => onTrainUnit(unitId)}
+                                  onClick={() => onTrainUnit(unitId, building.instanceId)}
                                   className={`rounded px-2.5 py-1 font-semibold transition ${
                                     canTrain
                                       ? 'bg-emerald-600 text-white hover:bg-emerald-500'
@@ -849,16 +902,40 @@ export default function BuildingModal({
               {activeCraftOrResearch.length > 0 && (
                 <section className="rounded-lg border border-sky-800/60 bg-sky-950/30 p-2.5">
                   <div className="font-semibold text-sky-300">Active Work Queue</div>
-                  {activeCraftOrResearch.map((t) => (
-                    <div key={t.id} className="mt-1 flex justify-between font-mono text-[11px]">
-                      <span>
-                        {t.recipeId
+                  {activeCraftOrResearch.map((t) => {
+                    const taskLabel =
+                      t.kind === 'train_unit'
+                        ? `Recruit ${UNITS[t.unitId]?.name ?? t.unitId}`
+                        : t.recipeId
                           ? `${t.quantity > 1 ? `${t.quantity}x ` : ''}${RECIPES[t.recipeId].name}`
-                          : TECHNOLOGIES[t.techId].name}
-                      </span>
-                      <span>{formatRealDurationHMS(t.completedAtMs - state.virtualTimeMs, activeSpeed)}</span>
-                    </div>
-                  ))}
+                          : TECHNOLOGIES[t.techId].name;
+                    const canCancelQueued =
+                      !isAbandoned &&
+                      cancelTaskFn &&
+                      canCancelTask(t, state.virtualTimeMs).allowed;
+                    return (
+                      <div
+                        key={t.id}
+                        className="mt-1 flex items-center justify-between gap-2 font-mono text-[11px]"
+                      >
+                        <span>{taskLabel}</span>
+                        <div className="flex items-center gap-2">
+                          {canCancelQueued && (
+                            <button
+                              type="button"
+                              onClick={() => cancelTaskFn(t.id)}
+                              className="rounded border border-rose-700/70 bg-rose-950/70 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200 hover:bg-rose-900/80"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          <span>
+                            {formatRealDurationHMS(t.completedAtMs - state.virtualTimeMs, activeSpeed)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </section>
               )}
 

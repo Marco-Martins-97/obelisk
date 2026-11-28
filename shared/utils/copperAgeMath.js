@@ -215,10 +215,107 @@ export function getWatchtowerTileDefense(buildings = [], x = 0, y = 0) {
   return best;
 }
 
+/** Active city footprint side length (in tiles) keyed by Main Village Hall tier (`1..5`). */
+export const CITY_SIZE_BY_MAIN_TIER = Object.freeze({
+  1: 0,
+  2: 1,
+  3: 3,
+  4: 5,
+  5: 7,
+});
+
+/**
+ * Computes the inclusive square city footprint bounds centered on `Main Village Hall`
+ * for the active village Age tier (`Stone: 0`, `Copper: 1×1`, `Bronze: 3×3`, `Iron: 5×5`, `Steel: 7×7`).
+ *
+ * @param {object} [params={}]
+ * @param {Array<object>} [params.buildings=[]]
+ * @param {number | null} [params.mainTier=null]
+ * @param {number} [params.centerX=12]
+ * @param {number} [params.centerY=12]
+ * @returns {{
+ *   size: number,
+ *   halfRadius: number,
+ *   centerX: number,
+ *   centerY: number,
+ *   minX: number,
+ *   maxX: number,
+ *   minY: number,
+ *   maxY: number,
+ * }} Inclusive tile bounds (when `size === 0`, `maxX < minX`).
+ */
+export function getCityZoneBounds({
+  buildings = [],
+  mainTier = null,
+  centerX = 12,
+  centerY = 12,
+} = {}) {
+  const main = (buildings ?? []).find((b) => b.buildingId === 'main');
+  const tier = Math.min(5, Math.max(1, Number(mainTier ?? main?.tier ?? 1) || 1));
+  const cx = main?.x ?? centerX;
+  const cy = main?.y ?? centerY;
+  const size = CITY_SIZE_BY_MAIN_TIER[tier] ?? 0;
+
+  if (size <= 0) {
+    return {
+      size: 0,
+      halfRadius: -1,
+      centerX: cx,
+      centerY: cy,
+      minX: cx,
+      maxX: cx - 1,
+      minY: cy,
+      maxY: cy - 1,
+    };
+  }
+
+  const halfRadius = (size - 1) / 2;
+  return {
+    size,
+    halfRadius,
+    centerX: cx,
+    centerY: cy,
+    minX: cx - halfRadius,
+    maxX: cx + halfRadius,
+    minY: cy - halfRadius,
+    maxY: cy + halfRadius,
+  };
+}
+
+/**
+ * Checks whether tile `(x, y)` lies inside the active village city footprint.
+ *
+ * @param {object} [params={}]
+ * @param {number} [params.x=0]
+ * @param {number} [params.y=0]
+ * @param {Array<object>} [params.buildings=[]]
+ * @param {number | null} [params.mainTier=null]
+ * @param {number} [params.centerX=12]
+ * @param {number} [params.centerY=12]
+ * @returns {boolean}
+ */
+export function isTileInCityZone({
+  x = 0,
+  y = 0,
+  buildings = [],
+  mainTier = null,
+  centerX = 12,
+  centerY = 12,
+} = {}) {
+  const bounds = getCityZoneBounds({ buildings, mainTier, centerX, centerY });
+  return (
+    bounds.size > 0 &&
+    x >= bounds.minX &&
+    x <= bounds.maxX &&
+    y >= bounds.minY &&
+    y <= bounds.maxY
+  );
+}
+
 /**
  * Computes effective fortification & degradation reduction at `(x, y)`.
- * `City Wall` and covering `Watchtower` (`3x3` zone) overlap without additive stacking —
- * the single highest active protection value prevails.
+ * `City Wall` applies only inside the active City footprint while covering `Watchtower`
+ * (`3x3` zone) applies around the tower — the single highest active protection value prevails.
  *
  * @param {object} params
  * @param {Array<object>} [params.buildings=[]]
@@ -228,7 +325,10 @@ export function getWatchtowerTileDefense(buildings = [], x = 0, y = 0) {
  * @returns {{ defensePercent: number, degradationReduction: number, wallDefense: number, towerDefense: number }}
  */
 export function getEffectiveTileProtection({ buildings = [], wall = null, x = 0, y = 0 } = {}) {
-  const wallDefense = getWallBonuses(wall).defensePercent;
+  const main = (buildings ?? []).find((b) => b.buildingId === 'main');
+  const effectiveMainTier = main?.tier ?? wall?.tier ?? 1;
+  const inCity = isTileInCityZone({ x, y, buildings, mainTier: effectiveMainTier });
+  const wallDefense = inCity ? getWallBonuses(wall).defensePercent : 0;
   const towerDefense = getWatchtowerTileDefense(buildings, x, y);
   const defensePercent = Math.max(wallDefense, towerDefense);
   return {
@@ -757,7 +857,14 @@ export function advanceCropFieldsAndOrchards({
  */
 export function resolveCropHarvest({ plot, unlockedTechs = [] }) {
   if (!plot || plot.status !== 'ready' || !plot.cropId || plot.survivingSlots <= 0) {
-    return { harvestedQty: 0, itemId: null, plot: plot ?? createEmptyCropPlot() };
+    return {
+      harvestedQty: 0,
+      itemId: null,
+      secondaryItemId: null,
+      secondaryQty: 0,
+      items: {},
+      plot: plot ?? createEmptyCropPlot(),
+    };
   }
   const crop = CROPS[plot.cropId];
   const normalizedNutrients = normalizeCropNutrients(plot.nutrients);
@@ -768,9 +875,22 @@ export function resolveCropHarvest({ plot, unlockedTechs = [] }) {
   const avgYield = (crop.yieldMin + crop.yieldMax) / 2 + toolBonus;
   const harvestedQty = Math.max(1, Math.round(plot.survivingSlots * avgYield * nutrientFactor));
 
+  const secondaryItemId = crop.secondaryHarvestItemId ?? null;
+  const secondaryQty =
+    secondaryItemId && crop.secondaryYieldRatio > 0
+      ? Math.max(1, Math.round(harvestedQty * crop.secondaryYieldRatio))
+      : 0;
+  const items = { [crop.harvestItemId]: harvestedQty };
+  if (secondaryItemId && secondaryQty > 0) {
+    items[secondaryItemId] = (items[secondaryItemId] ?? 0) + secondaryQty;
+  }
+
   return {
     harvestedQty,
     itemId: crop.harvestItemId,
+    secondaryItemId,
+    secondaryQty,
+    items,
     plot: {
       ...createEmptyCropPlot(),
       nutrients: normalizedNutrients,

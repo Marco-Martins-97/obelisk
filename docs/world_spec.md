@@ -29,7 +29,8 @@ Generates an `M×M` regional grid from `(tileSeed, worldTileContext)`:
 - **Forest Layer:** Territory-only `forestDensity` (`0.0`–`1.0`) guaranteeing **at least 1 forest tile** (`>= 0.52`) outside water and the settlement zone.
 - **Per-Ore Prospecting Layers:** No pre-spawned ore nodes; instead, each ore hosted by the parent tile's `rockType` gets an independent `ores[oreId]` (`0.0`–`1.0`) density field scaled by ore rarity (`common` → broader veins, `very_rare` → tiny concentrated pockets).
 - **Settlement Zone & Spawn Rules:**
-  - Reserves a dry, forest-free central `7×7` buildable zone for a settlement (`7×7` Capital or `5×5` City).
+  - Reserves a dry, forest-free central `7×7` buildable pad (`inSettlementZone`) at terrain generation time so settlements can expand safely up to `Steel` Tier without hitting lakes or forests.
+  - Active rendered/fortified City bounds scale with `Main Village Hall` Tier (`CITY_SIZE_BY_MAIN_TIER`: `Stone = 0`, `Copper = 1×1`, `Bronze = 3×3`, `Iron = 5×5`, `Steel = 7×7`).
   - **Player Starter Spawn:** New players spawn in the **central N-S latitude band** (`30%–70%`) across the **full W-E longitude range**, strictly on `buildable` non-Obelisk continent tiles.
   - **Terrain Categories for Stone Age Units:** Territory sub-tiles fall into **Water** (`isWater`), **Forest** (`forestDensity >= 0.52`), or **Fields** (dry open land) for `gatherer` and `hunter` yields.
 
@@ -45,7 +46,7 @@ Generates an `M×M` regional grid from `(tileSeed, worldTileContext)`:
 A sticky Top Navbar (`react-router`) switches between **Online (`/`)** and **Sandbox (`/sandbox`)** with a local speed selector (`1×`–`3600×`, default `6×`) and a sticky **Village Header Bar** (`Age · Main Tier · Level`, `World (x, y)`, `Storage`, `Food`, `Water`, `Pop`) anchored directly underneath:
 - **Sandbox (`/sandbox`):** Localhost-persisted Dev Visualizer & playable village sandbox:
   - **Primary Map (`672×672` Territory ↔ Continent Toggle):** Switches the full-size `672×672` interactive canvas between Territory Terrain and Continent Map (`50px` zoomable tiles, `1px` `#000000` selected tile outline, optional **Fog of War** toggle).
-  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, lakes/rivers/springs, forest canopies, placed buildings (`BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
+  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, lakes/rivers/springs, forest canopies, yellow overlays across both active Age-scaled City footprints (`0 / 1×1 / 3×3 / 5×5 / 7×7`) and `Watchtower` (`3×3`) protection zones, tier-colored outer `City Wall` borders (Wood `#b45309`, Stone `#e2e8f0`, Brick `#f59e0b`) when `wall.level > 0`, distinct building badges/colors (`BUILDING_COLORS` in `mapColors.js` for all Stone, Copper, and Bronze structures; `BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
   - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and per-ore `Ores` layers) with `10×` local contrast on Territory elevation/temperature, an **Unbuildable (60% Red)** overlay toggle, `tileSeed` inspector (`TileInspector`), and live `seed` / grid size controls.
   - **Right Sidebar & Bottom Footer:** Displays `TileInspector` above four stacked container cards (**Active Timers** with `(x, y) Team (...)` and `Conclusion: HH:MM:SS` + `Traveling / Working / Returning HH:MM:SS` → **Units** → **Stockpile** with Eat & discard controls → **Unlocked Technologies**), plus a full-width **Village Log** footer.
 - **Online (`/`):** Gameplay-only UI with strict Fog of War & information hiding:

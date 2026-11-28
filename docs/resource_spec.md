@@ -39,10 +39,11 @@ Round-trip timed action (`outbound + hunt + return`) with probabilistic yields:
   - **`DRYING_RACK` (requires `stone_tools`):** Air-dried `dried_meat` (`3` food, `5%/d`), `dried_fish` (`2` food, `6%/d`), and salt-cured `salted_meat` (`4` food, `1%/d`), `salted_fish` (`3` food, `1%/d`).
   - **`KILN`:** Charcoal (`+wood_ash`), **`craft_clay_vessel`** (after `clay_vessels`: `+10` water bowls & `+20` preserved food capacity at `0.7×` spoilage each), and Ore/Nugget smelting (`1 craft button` per ingot output).
 - **Salt Acquisition (`Salt-A`):** Boiled from water at a Stone Age **`FIREPIT`** and mined later in the Copper Age from `limestone` and `shale` ore veins (never dropped from river panning).
-- **Unit Training Costs & Dismissal:** `Gatherer` & `Builder` are free (`{}`); `Hunter` costs `1 stick` (`1 stick + 1 small_stone` once `stone_tools` unlocks); `Prospector`, `Scout`, and `Caravan` consume configured material/livestock costs. Idle units can be dismissed anytime via `dismissUnit` (`Dispense -1` / `-1`).
-- **Forest Predator Encounters:** Forest operations roll `Wolf` (`10%`) or `Bear` (`4%`) encounters — unescorted Gatherers risk 1 death, while Hunters slay predators for bonus `meat`, `bones`, and `pelts`.
-- **Fuel:** `sticks` and `charcoal` (crafted at the **`KILN`**).
-- **Copper Age Evolution Trigger:** Smelt **`10 copper_nuggets` + `2 charcoal` → `1 copper_ingot`** (or smelt mined Ore) in the **`KILN`** (`unlocksTech: 'copper_age'`, passive unlock), unlocking the Tier 2 upgrade on `MAIN` using normal materials.
+- **Timed Unit Recruitment, Costs & Dismissal:** Unit recruitment is queued in real time (`trainingTimeHours`: `0.05h` for `Gatherer`/`Hunter`/`Builder`, `0.2–0.35h` for Copper/Barracks troops, `0.4–0.6h` for Bronze naval vessels), reserving `popUsed` immediately until completion and cancellable inside the first `10%` of task duration. `Gatherer` & `Builder` are free (`{}`); `Hunter` costs `1 stick` (`1 stick + 1 small_stone` once `stone_tools` unlocks); `Prospector`, `Scout`, `Caravan`, Barracks troops, and Port ships consume configured material/livestock costs. Idle units can be dismissed anytime via `dismissUnit` (`Dispense -1` / `-1`).
+- **Crop Field Harvest & Secondary Straw:** Harvesting mature `Grain` (`CROPS.grain`) drops `grain` plus `0.6×` (`Math.max(1, Math.round(qty * 0.6))`) `straw`.
+- **Forest Predator Encounters:** Forest operations roll `Wolf` (`10%`) or `Bear` (`4%`) encounters — unescorted Gatherers risk 1 death, while Hunters and Barracks escorts (`Spearman`, `Swordsman`, `Archer`, `Cavalry`) slay predators for bonus `meat`, `bones`, and `pelts`.
+- **Fuel:** `sticks` and `charcoal` (crafted at the **`KILN`** or **`FORGE`**).
+- **Copper & Bronze Age Progression:** Smelting `copper_ingot` passively unlocks **`copper_age`** (`MAIN` Tier 2); smelting `bronze_ingot` at `KILN` or `FORGE` passively unlocks **`bronze_age`** (`MAIN` Tier 3); smelting `iron_ingot` at `BLOOMERY` passively unlocks **`iron_age`** (`MAIN` Tier 4).
 
 ### 2.4 Technology Tree (`/shared/config/technologies.js`)
 Tools are **permanent, player-persistent technologies** rather than physical storage items (`researchMode`: `'starter' | 'passive' | 'research'`), auto-applying `getBestUnlockedTool` and moving completed researches out of active research lists:
@@ -51,12 +52,15 @@ Tools are **permanent, player-persistent technologies** rather than physical sto
 | :--- | :--- | :--- | :--- | :--- |
 | **`wood_tools`** | T1 Starter | Unlocked at spawn (`starter`) | Free (starter tech) | `1.0×` work speed, `0` loot bonus |
 | **`stone_tools`** | T2 Research | Build **`1 FIREPIT`** | At `FIREPIT`: `{ small_stones: 3, sticks: 2 }`, `1.0h` | **`+20%`** work speed, **`+1`** max loot, **`-50%`** empty weight, unlocks **`KILN`** |
-| **`basket_weaving`** | T1 Research | Build **`1 FIREPIT`** | At `FIREPIT`: `{ sticks: 4, straw: 3 }`, `0.8h` | `[Research] -> [Craft]` `woven_basket` (`+15` general storage bulk each) |
-| **`clay_vessels`** | T2 Research | Build **`1 KILN`** | At `KILN`: `{ clay: 4, sticks: 2 }`, `1.0h` | `[Research] -> [Craft]` `clay_vessel` (`+10` water cap & `+20` preserved food cap) |
+| **`basket_weaving`** | T1 Research | Build **`1 FIREPIT`** | At `FIREPIT` / `WORKSHOP` / `SMOKEHOUSE` | `[Research] -> [Craft]` `woven_basket` (`+15` general storage bulk each) |
+| **`clay_vessels`** | T2 Research | Build **`1 KILN`** | At `KILN` / `FORGE` | `[Research] -> [Craft]` `clay_vessel` (`+10` water cap & `+20` preserved food cap) |
 | **`copper_age`** | T2 Passive | Craft **`1 copper_ingot`** at `KILN` | Automatic passive unlock | Upgrades `MAIN` to Tier 2 + unlocks **`SMITHY`** |
-| **`stone_axe`..`stone_hammer`** | T2 Research | Build **`SMITHY`** | At `SMITHY` (`bones` + `sticks`/`small_stones`) | Unlocks Copper Age extraction, `N/P/K` farming, wells, granaries, walls, markets, outposts |
-| **`copper_axe`..`copper_hammer`** | T3 Research | Prerequisite `stone_*`/`bone_*` tool | `{ copper_ingot: 1, sticks: 2 }` at `SMITHY` | **`+35%`** specialized production/work speed & `+1` bonus |
-| **`bronze_age`** | T3 Passive | Smelt **`1 bronze_ingot`** at `KILN` | Automatic passive unlock | Upgrades `MAIN` to Bronze Age (`Tier 3`) |
+| **`stone_axe`..`stone_hammer`**, **`stone_knife`**, **`stone_sickle`** | T2 Research | Build **`SMITHY`** | At `SMITHY` / `FORGE` (`bones` + `sticks`/`small_stones`) | Unlocks Copper Age extraction, `N/P/K` farming, wells, granaries, walls, markets, outposts |
+| **`copper_*`**, **`wood_bow`**, **`copper_sword`**, **`wood_shield`** | T2 Research | Prerequisite starter tool | `{ copper_ingot, sticks, ... }` at `SMITHY` / `FORGE` | **`+35%`** work speed, `Workshop` (`copper_saw`), `Smokehouse` (`copper_knife`), `Barracks` troops |
+| **`bronze_age`** | T3 Passive | Smelt **`1 bronze_ingot`** at `KILN` / `FORGE` | Automatic passive unlock | Upgrades `MAIN` to Bronze Age (`Tier 3`) + unlocks **`FORGE`** (`copper_hammer`) |
+| **`bronze_*`**, **`composite_bow`**, **`bronze_sword`**, **`bronze_shield`**, **`bronze_armor`** | T3 Research | Build **`FORGE`** (`bronze_age` + `copper_hammer`) | At `FORGE` (`bronze_ingot`, `planks`, `leather`) | Unlocks `Port` (`bronze_saw`), `Bloomery` (`bronze_pickaxe` + `bronze_hammer`), Barracks Bronze refits |
+| **`leather_working`**, **`leather_armor`**, **`saddle`** | T2 Research | Build **`WORKSHOP`** | At `WORKSHOP` | `[Research] -> [Craft]` `leather`; unlocks `Cavalry` (`saddle`) & unit armors |
+| **`iron_age`** | T4 Passive | Smelt **`1 iron_ingot`** at `BLOOMERY` | Automatic passive unlock | Unlocks Iron Age (`MAIN` Tier 4) |
 
 ---
 

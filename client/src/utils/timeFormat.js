@@ -119,3 +119,55 @@ export function formatCostSummary(cost) {
     .map(([id, qty]) => `${qty} ${RESOURCES[id]?.name ?? id}`)
     .join(', ');
 }
+
+/**
+ * Returns the Tailwind color class for unit availability counters:
+ * - `0/0` (none trained): gray (`text-slate-500`)
+ * - `0/N` (none free): red (`text-rose-400`)
+ * - `1..N-1/N` (partial free): yellow (`text-amber-300`)
+ * - `N/N` (all free): green (`text-emerald-400`)
+ *
+ * @param {number} freeCount
+ * @param {number} totalCount
+ * @returns {string} Tailwind text color class.
+ */
+export function getUnitAvailabilityColorClass(freeCount, totalCount) {
+  if ((totalCount ?? 0) <= 0) return 'text-slate-500';
+  if ((freeCount ?? 0) <= 0) return 'text-rose-400';
+  if (freeCount < totalCount) return 'text-amber-300';
+  return 'text-emerald-400';
+}
+
+/**
+ * Returns threshold color class for utilization pools (`Storage`, `Pop`):
+ * - `100%` (`used >= capacity`): red (`text-rose-400`)
+ * - `>90%`: orange (`text-orange-400`)
+ * - otherwise `defaultClass`.
+ *
+ * @param {number} used
+ * @param {number} capacity
+ * @param {string} [defaultClass='text-slate-200']
+ * @returns {string} Tailwind text color class.
+ */
+export function getCapacityHighColorClass(used, capacity, defaultClass = 'text-slate-200') {
+  if ((capacity ?? 0) <= 0 || used >= capacity) return 'text-rose-400';
+  if (used / capacity > 0.9) return 'text-orange-400';
+  return defaultClass;
+}
+
+/**
+ * Returns threshold color class for consumable reserves (`Food`, `Water`):
+ * - `0%` (`current <= 0`): red (`text-rose-400`)
+ * - `<10%` of reference capacity: orange (`text-orange-400`)
+ * - otherwise `defaultClass`.
+ *
+ * @param {number} current
+ * @param {number} capacity
+ * @param {string} [defaultClass='text-slate-200']
+ * @returns {string} Tailwind text color class.
+ */
+export function getReserveLowColorClass(current, capacity, defaultClass = 'text-slate-200') {
+  if ((current ?? 0) <= 0) return 'text-rose-400';
+  if ((capacity ?? 0) > 0 && current / capacity < 0.1) return 'text-orange-400';
+  return defaultClass;
+}

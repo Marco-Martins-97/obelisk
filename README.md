@@ -2,7 +2,7 @@
 
 > **An asynchronous, browser-based MMORTS** combining *Tribal Wars*-style world exploration and marketplace trading with *TerraFirmaCraft*-inspired geological scarcity, prospecting, and seasonal survival.
 
-**Current Version:** `v0.4.0` *(Stages 0–4 Complete — Stone & Copper Age Vertical Slices, Degradation & Repair, N/P/K Farming, Vessels/Baskets, Combat Encounters, Real-Time `HH:MM:SS` Timers & Unit Dismissal)*  
+**Current Version:** `v0.4.0` *(Stages 0–5 Playable in Client — Stone, Copper & Bronze Age Vertical Slices, Dynamic City/Watchtower/Wall Overlays, Timed Unit Recruitment, HUD Thresholds & 10% Task Cancel Window)*  
 **Platform Note:** Built for **Desktop web browsers** (left/right-click context menus, tile hover tooltips, and scroll-wheel map zoom); some interactions do not work on phones or small touch screens yet.  
 **Tech Stack:** React 19 · React Router 8 · Vite 8 · Tailwind CSS v4 · Pure ES6+ ESM Workspaces · Vitest · ESLint *(Backend Stage 5+: Node.js, Express, MongoDB, Socket.io, BullMQ)*
 
@@ -33,12 +33,12 @@
 ### 4. High-Performance HTML5 Canvas Viewport (`/client`)
 - **Viewport Frustum Culling (`getVisibleTileRange`):** Renders only on-screen tiles `+ 1` tile margin, keeping draw cost bounded by screen pixels regardless of map size, paired with clamped pan and cursor-anchored zoom.
 - **Dual Map Modes:**
-  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, water, forest canopies, placed buildings (`BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
+  - **Gameplay View:** Cached `16×16` offscreen surface sprites for biomes, water, forest canopies, yellow overlays across Age-scaled City footprints (`0 / 1×1 / 3×3 / 5×5 / 7×7`) and `Watchtower` (`3×3`) auras, tier-colored outer `City Wall` borders (`Wood`/`Stone`/`Brick`), distinct building badges (`BUILDING_COLORS` across Stone, Copper & Bronze structures; `BLD` while constructing), and team markers (`Blue` Gatherer, `Red` Hunter, `Orange` Mixed).
   - **Dev View:** Data layer heatmaps (`Biome`, grayscale `Elevation`, `Temperature`, `Moisture`, `Stone`, `Forest`, and dynamic per-ore layers), `10×` local contrast amplification on Territory gradients, an **Unbuildable (60% Red)** overlay toggle, and hex `tileSeed` inspection.
 
-### 5. Stone & Copper Age Playable Loop, Survival, Storage & Offline Mode (`/shared` & `/client`)
-- **`Offline (/)` vs. `Sandbox (/sandbox)` Routes:** Sticky top `TopNavbar` (`react-router`) switches between **Offline (`/`)** (fixed `6×` simulation speed until the backend server releases, with in-game Celsius temperature and a built-in **How to Play** modal) and **Sandbox (`/sandbox`)** (`1×–3600×` speed selector, Dev overlays, **Unlock Map** / **Unlock Continent**, **`+1 Day`/`+1 Month`/`+1 Year`** time jumps, and **Add Resource** cheat controls).
-- **Real-Time Timers (`HH:MM:SS`), Header Modals & Active-While-Upgrading UI:** Right sidebar displays **Production (`/day`) → Units (`Free / Total` with idle `-1` dismissal) → Active Timers** (`Conclusion: HH:MM:SS` wall-clock end and remaining `HH:MM:SS`), while all build/upgrade/craft/research durations also display in speed-scaled `HH:MM:SS`. **Stockpile** (category tabs + left-click item card menu), **Technologies**, and **Village Log** open as Header modals. Crafting groups multi-recipe products (`via Ore` / `via Nuggets`) under one `Craft` button with batch quantities (`-`/`+`/`Max`), `have/needed Resource` costs (`CostInline`, missing highlighted red), and active-while-upgrading buildings.
+### 5. Stone, Copper & Bronze Age Playable Loop, Survival & Offline Mode (`/shared` & `/client`)
+- **`Offline (/)` vs. `Sandbox (/sandbox)` Routes:** Sticky top `TopNavbar` (`react-router`) switches between **Offline (`/`)** (fixed `6×` simulation speed until the backend server releases, with in-game Celsius temperature and a built-in **How to Play** modal) and **Sandbox (`/sandbox`)** (`1×–3600×` speed selector, **`+ Spawn Colony`** & Territory Switcher, Dev overlays, **Unlock Map** / **Unlock Continent**, **`+1 Day`/`+1 Month`/`+1 Year`** time jumps, and **Add Resource** cheat controls).
+- **Real-Time Timers (`HH:MM:SS`), Timed Recruitment, Header Warnings & 10% Cancel Window:** Sticky status header colors `Storage`/`Pop` (`>90%` orange, `100%` red) and `Food`/`Water` (`<10%` orange, `0%` red). Right sidebar displays **Production (`/day`) → Units** (white unit names, color-coded `{free}/{total}` counters `0/0` gray / `0/N` red / partial yellow / `N/N` green, idle `-1` dismissal) **→ Active Timers** (`Conclusion: HH:MM:SS` wall-clock end, remaining `HH:MM:SS`, and **`Cancel`** during the first `10%` of any task with full refunds). Unit training queues over real-time timers (`trainingTimeHours`), reserving `Pop` immediately while active. **Stockpile**, **Technologies**, and **Village Log** open as Header modals. Crafting groups multi-recipe products under one `Craft` button (`CostInline` `have/needed` highlights) with active-while-upgrading buildings.
 - **Strict Fog of War:** Territory starts at `7×7` explored and Continent starts at `1` village tile; Offline hover tooltips show coordinates `(x, y)` only, expanding the `3×3` frontier once returning teams/builders arrive back at `MAIN`.
 - **`MAIN` Age Controller, Buildings & Material Split:** `MAIN` Tier (`1..5`) controls village Age, while Levels (`1..3`) scale pooled storage (`+250/lv`), population (`+10/lv`), and `MAIN` water storage (`10 / 25 / 50` bowls across Lv `1..3`). Basic structures (**Main**, **House**, **Warehouse**, **Drying Rack**) use basic materials (`sticks`, `pelts`, `straw`), while **Firepit** and **Clay Kiln** require `small_stones`.
 - **FEFO Auto-Feeding, Fractional Spoilage (`S1`), Salt & 5-Stage Starvation Debuffs:** Active `popUsed` consumes `1 food + 1 water bowl` per day automatically in **fastest-spoiling-first (`FEFO`)** order with multi-ration `foodCarry`; leftovers accumulate per-type fractional spoilage (`spoilageCarry`). **Firepit** boils water into **Salt** (`2 sticks + 10 water bowls -> 2 salt`) for **Drying Rack** cured rations (`1–6%/d` spoil). Deficits progress through **Hunger I (-10%) → Hunger II (-30%) → Hunger III (-50%) → Sickness (-80%) → Death (-80% + -10% maxPop/day)** with balanced highest-pop whole-unit casualties until **Abandoned** at `0` maxPop, recovering **`+20%` efficiency** and **`+10%` maxPop/day** when fed.
@@ -85,7 +85,7 @@ Obelisk/
 # 1. Install workspace dependencies from the repository root
 npm install
 
-# 2. Run all unit & UI component tests (64 tests across 7 suites)
+# 2. Run all unit & UI component tests (70 tests across 7 suites)
 npm test
 
 # 3. Run ESLint across shared, client, and server
@@ -108,9 +108,9 @@ npm run build:client
 | **Stage 1** | Deterministic `100×100` Continent & `25×25` Territory generators (`/shared`) | Complete |
 | **Stage 2** | Interactive Gameplay/Dev Canvas Map Visualizer & frustum culling (`/client`) | Complete |
 | **Stage 3** | Stone Age survival vertical slice: Tech Tree, Warehouse, Drying Rack, Salt, FEFO/Spoilage, Debuffs & Offline/Sandbox UI | Complete (`v0.3.0`) |
-| **Stage 4** | Copper Age: Smithy 6-tool split, fractional tier-level scaling, Prospector, continuous deposits & Well moisture scaling, `N/P/K` farming & Animal slaughter, Vessels/Baskets, Building Degradation & Repair/Abandonment, Right-click Quick Actions & Destroy Building, Wolf/Bear encounters, Real-time `HH:MM:SS` timers, Idle Unit Dismissal & Bronze Age trigger | Complete (`v0.4.0`) |
-| **Stage 5** | Bronze Age vertical slice (metallurgy, Bronze tools/units, regional logistics) | Next |
-| **Stage 6** | Express API, MongoDB sparse deltas, Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk (`/server`) | Planned |
+| **Stage 4** | Copper Age: Smithy 6-tool split, fractional tier-level scaling, Prospector, continuous deposits & Well moisture scaling, `N/P/K` farming (`Grain` + `Straw`) & Animal slaughter, Vessels/Baskets, Building Degradation & Repair/Abandonment, Right-click Quick Actions & Destroy Building, Wolf/Bear encounters, Real-time `HH:MM:SS` timers, Idle Unit Dismissal & Bronze Age trigger | Complete (`v0.4.0`) |
+| **Stage 5** | Bronze Age vertical slice (`Workshop`, `Smokehouse`, `Bronze Forge`, `Bloomery`, `Watchtower` `3×3` aura, `Port`, `Barracks` Option B refits, 2-tab `Market` + Sandbox `+ Spawn Colony`), dynamic City/Wall canvas overlays, timed recruitment, HUD thresholds & `10%` task cancellation | Playable in Client |
+| **Stage 6** | Express API, MongoDB sparse deltas, Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk (`/server`) | Next |
 
 See [GAME_OVERVIEW.md](./GAME_OVERVIEW.md) and [`docs/`](./docs/) for full specifications.
 
