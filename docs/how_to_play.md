@@ -1,4 +1,4 @@
-# How to Play Obelisk (Stone & Copper Age Guide)
+# How to Play Obelisk (Stone, Copper & Bronze Age Guide)
 
 > **Desktop Browser Notice:** Obelisk is built for Desktop web browsers (left/right-click canvas actions, hover tooltips, scroll-wheel zoom). Mobile/phone touch browsers are not fully supported.
 

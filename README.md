@@ -2,7 +2,7 @@
 
 > **An asynchronous, browser-based MMORTS** combining *Tribal Wars*-style world exploration and marketplace trading with *TerraFirmaCraft*-inspired geological scarcity, prospecting, and seasonal survival.
 
-**Current Version:** `v0.4.0` *(Stages 0–5 Playable in Client — Stone, Copper & Bronze Age Vertical Slices, Dynamic City/Watchtower/Wall Overlays, Timed Unit Recruitment, HUD Thresholds & 10% Task Cancel Window)*  
+**Current Version:** `v0.5.0` *(Stages 0–5 Complete — Stone, Copper & Bronze Age Vertical Slices, Dynamic City/Watchtower/Wall Overlays, Timed Unit Recruitment, HUD Thresholds & 10% Task Cancel Window)*  
 **Platform Note:** Built for **Desktop web browsers** (left/right-click context menus, tile hover tooltips, and scroll-wheel map zoom); some interactions do not work on phones or small touch screens yet.  
 **Tech Stack:** React 19 · React Router 8 · Vite 8 · Tailwind CSS v4 · Pure ES6+ ESM Workspaces · Vitest · ESLint *(Backend Stage 5+: Node.js, Express, MongoDB, Socket.io, BullMQ)*
 
@@ -109,7 +109,7 @@ npm run build:client
 | **Stage 2** | Interactive Gameplay/Dev Canvas Map Visualizer & frustum culling (`/client`) | Complete |
 | **Stage 3** | Stone Age survival vertical slice: Tech Tree, Warehouse, Drying Rack, Salt, FEFO/Spoilage, Debuffs & Offline/Sandbox UI | Complete (`v0.3.0`) |
 | **Stage 4** | Copper Age: Smithy 6-tool split, fractional tier-level scaling, Prospector, continuous deposits & Well moisture scaling, `N/P/K` farming (`Grain` + `Straw`) & Animal slaughter, Vessels/Baskets, Building Degradation & Repair/Abandonment, Right-click Quick Actions & Destroy Building, Wolf/Bear encounters, Real-time `HH:MM:SS` timers, Idle Unit Dismissal & Bronze Age trigger | Complete (`v0.4.0`) |
-| **Stage 5** | Bronze Age vertical slice (`Workshop`, `Smokehouse`, `Bronze Forge`, `Bloomery`, `Watchtower` `3×3` aura, `Port`, `Barracks` Option B refits, 2-tab `Market` + Sandbox `+ Spawn Colony`), dynamic City/Wall canvas overlays, timed recruitment, HUD thresholds & `10%` task cancellation | Playable in Client |
+| **Stage 5** | Bronze Age vertical slice (`Workshop`, `Smokehouse`, `Bronze Forge`, `Bloomery`, `Watchtower` `3×3` aura, `Port`, `Barracks` Option B refits, 2-tab `Market` + Sandbox `+ Spawn Colony`), dynamic City/Wall canvas overlays, timed recruitment, HUD thresholds & `10%` task cancellation | Complete (`v0.5.0`) |
 | **Stage 6** | Express API, MongoDB sparse deltas, Socket.io live sync, BullMQ expeditions, Iron/Steel Ages & The Obelisk (`/server`) | Next |
 
 See [GAME_OVERVIEW.md](./GAME_OVERVIEW.md) and [`docs/`](./docs/) for full specifications.
